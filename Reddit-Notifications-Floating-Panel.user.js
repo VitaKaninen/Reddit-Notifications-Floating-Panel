@@ -10,8 +10,8 @@
 // @grant        GM_setValue
 // @grant        GM_openInTab
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/VitaKaninen/Reddit-Notifications-Floating-Panel/main/Reddit-Notifications-Floating-Paneluser.js
-// @updateURL    https://raw.githubusercontent.com/VitaKaninen/Reddit-Notifications-Floating-Panel/main/Reddit-Notifications-Floating-Paneluser.js
+// @downloadURL  https://raw.githubusercontent.com/VitaKaninen/Reddit-Notifications-Floating-Panel/main/Reddit-Notifications-Floating-Panel.user.js
+// @updateURL    https://raw.githubusercontent.com/VitaKaninen/Reddit-Notifications-Floating-Panel/main/Reddit-Notifications-Floating-Panel.user.js
 // ==/UserScript==
 
 (function () {
