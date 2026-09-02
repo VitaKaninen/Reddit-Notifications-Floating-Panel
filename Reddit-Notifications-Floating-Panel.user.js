@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.3.0
+// @version      6.4.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -58,12 +58,13 @@
   const MIN_REFRESH_MS = 10000;
   const REQUEST_TIMEOUT_MS = 20000;
 
-  // Sidebar following: by default the panel's top-left corner sits this many px inside the
-  // page's right sidebar's top-left corner (so that much of the sidebar stays visible above
-  // and beside it) while its right and bottom edges stay docked to the viewport. It re-derives
-  // that on every window resize until the user drags or resizes it. `box` is the element
-  // whose top we use (the sticky container on www); `inner` gives the left edge (the 306px
-  // content column).
+  // Edge anchoring. The panel's LEFT edge is held at an offset from the page's right sidebar,
+  // so the panel never creeps over the post column as the window widens. Its TOP, RIGHT and
+  // BOTTOM edges are held at offsets from the window's own edges, so nothing about the page's
+  // vertical layout — scroll position above all — can change the panel's height. Dragging or
+  // resizing the panel simply rewrites those four offsets, so it keeps tracking afterwards.
+  // FOLLOW_INSET is the left/top offset a reset starts from. `box` is the element whose top
+  // we read (the sticky container on www); `inner` gives the left edge (the 306px card).
   const FOLLOW_INSET = 20;
   const SIDEBAR = IS_OLD_REDDIT
     ? { box: '.side', inner: '.side' }
@@ -226,30 +227,69 @@
     };
   }
 
-  // Top-left corner of the page's right sidebar (clipped to the viewport), or null when the
-  // page has none or Reddit has hidden it (below its `s` breakpoint the container is
-  // display:none, so its rect collapses to 0x0).
-  function sidebarOrigin() {
+  // Left edge of the page's right sidebar, or null when the page has none or Reddit has
+  // hidden it (below its `s` breakpoint the container is display:none, so its rect collapses
+  // to 0x0). Vertical scrolling never moves this, which is why only the left edge tracks it.
+  function sidebarLeft() {
     const box = document.querySelector(SIDEBAR.box);
     if (!box) return null;
     const inner = document.querySelector(SIDEBAR.inner) || box;
     const b = box.getBoundingClientRect();
     const i = inner.getBoundingClientRect();
     if (b.width < 1 || b.height < 1 || i.width < 1) return null;
-    return { x: i.left, y: Math.max(0, b.top) };
+    return i.left;
   }
 
-  // Geometry whose top and left edges sit FOLLOW_INSET px inside the sidebar's, so that much
-  // of the sidebar stays visible above and beside the panel, while the right and bottom
-  // edges stay docked to the viewport exactly like the bottom-right default. Null when there
-  // is no usable sidebar (or no room), in which case callers keep what they already have.
-  function followGeometry() {
-    const s = sidebarOrigin();
-    if (!s) return null;
+  // Where the sidebar's top edge sits with the page scrolled to the top. Reddit's sidebar is
+  // position:sticky, so both its live rect.top and its offsetTop shrink as you scroll (both
+  // verified 2026-09-02) and reading either would make a reset — or a reload that lands
+  // mid-page — open a taller panel than intended. The nearest non-sticky ancestor keeps the
+  // layout position we actually want: 192 on a subreddit, 56 on home, at any scroll offset.
+  function sidebarTopUnscrolled() {
+    const box = document.querySelector(SIDEBAR.box);
+    if (!box) return null;
+    const r = box.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    let ref = box;
+    while (ref && getComputedStyle(ref).position === 'sticky') ref = ref.parentElement;
+    if (!ref) ref = box;
+    return Math.max(0, Math.round(ref.getBoundingClientRect().top + window.scrollY));
+  }
+
+  // anchor -> geometry. Null when there is no usable sidebar (or no room left for the panel),
+  // in which case callers keep whatever geometry they already have.
+  function anchorToGeometry(a) {
+    const sx = sidebarLeft();
+    if (sx === null || !a) return null;
     const vp = viewport();
-    const x = s.x + FOLLOW_INSET, y = s.y + FOLLOW_INSET;
-    if (vp.w - x < MIN_W || vp.h - y < MIN_H) return null;
-    return clampGeometry({ x, y, w: vp.w - x, h: vp.h - y });
+    const x = sx + a.left, y = a.top;
+    if (vp.w - a.right - x < MIN_W || vp.h - a.bottom - y < MIN_H) return null;
+    return clampGeometry({ x, y, w: vp.w - a.right - x, h: vp.h - a.bottom - y });
+  }
+
+  // geometry -> anchor, after a drag or a resize. With the sidebar hidden there is nothing to
+  // measure the left edge against, so that one offset keeps its previous value.
+  function geometryToAnchor(g) {
+    const sx = sidebarLeft();
+    const vp = viewport();
+    return {
+      left:   sx === null ? (anchor ? anchor.left : FOLLOW_INSET) : Math.round(g.x - sx),
+      top:    Math.round(g.y),
+      right:  Math.round(vp.w - (g.x + g.w)),
+      bottom: Math.round(vp.h - (g.y + g.h)),
+    };
+  }
+
+  // The reset placement: FOLLOW_INSET inside the sidebar's top-left corner, right and bottom
+  // edges flush with the window.
+  function defaultAnchor() {
+    const top = sidebarTopUnscrolled();
+    if (top === null) return null;
+    return { left: FOLLOW_INSET, top: top + FOLLOW_INSET, right: 0, bottom: 0 };
+  }
+
+  function validAnchor(a) {
+    return !!a && ['left', 'top', 'right', 'bottom'].every(k => typeof a[k] === 'number' && isFinite(a[k]));
   }
 
   // ---------------------------------------------------------------------------
@@ -789,8 +829,8 @@
   let panel = null;
   const ui = {};                 // element refs
   let geometry = null;           // { x, y, w, h } of the *restored* (non-minimized) panel
-  let follow = true;             // geometry tracks the page's right sidebar until the user drags/resizes
-  let followRetryTimers = [];    // late re-alignments for sidebars that render after the panel opens
+  let anchor = null;             // { left, top, right, bottom } edge offsets; see "Edge anchoring"
+  let anchorRetryTimers = [];    // late re-alignments for sidebars that render after the panel opens
   let minimized = false;
   let items = [];
   let moreUrl = null;
@@ -810,15 +850,16 @@
   function saveGeometry() {
     if (!geometry) return;
     const vp = viewport();
-    saveJSON(KEY_GEOMETRY, { ...geometry, vw: vp.w, vh: vp.h, follow });
+    saveJSON(KEY_GEOMETRY, { ...geometry, vw: vp.w, vh: vp.h, anchor });
   }
 
-  // Re-derive the geometry from the sidebar. Returns false (and changes nothing) when not
-  // following or when no usable sidebar exists right now, so a sidebar that Reddit hides at
-  // a narrow width simply leaves the panel where it last was.
-  function applyFollow(persist) {
-    if (!follow || !isOpen()) return false;
-    const g = followGeometry();
+  // Re-derive the geometry from the anchor. Returns false (and changes nothing) when no
+  // usable sidebar exists right now, so a sidebar that Reddit hides at a narrow width simply
+  // leaves the panel where it last was.
+  function applyAnchor(persist) {
+    if (!isOpen()) return false;
+    if (!anchor) anchor = defaultAnchor();   // only before the panel has ever seen a sidebar
+    const g = anchorToGeometry(anchor);
     if (!g) return false;
     geometry = g;
     layoutPanel();
@@ -828,9 +869,9 @@
 
   // Reddit's right rail is a lazily loaded partial, so it can land after the panel is up
   // (on boot and after SPA navigations). Two delayed re-checks catch that without polling.
-  function scheduleFollowRetries() {
-    for (const t of followRetryTimers) clearTimeout(t);
-    followRetryTimers = [800, 2500].map(ms => setTimeout(() => applyFollow(true), ms));
+  function scheduleAnchorRetries() {
+    for (const t of anchorRetryTimers) clearTimeout(t);
+    anchorRetryTimers = [800, 2500].map(ms => setTimeout(() => applyAnchor(true), ms));
   }
 
   // Position the panel element from `geometry` + `minimized`.
@@ -858,7 +899,7 @@
 
   function onViewportResize() {
     if (!isOpen() || !geometry) return;
-    if (applyFollow(true)) return;
+    if (applyAnchor(true)) return;
     const saved = loadJSON(KEY_GEOMETRY, null);
     const base = { ...geometry, vw: saved && saved.vw, vh: saved && saved.vh };
     setGeometry(adaptGeometry(base), true);
@@ -923,10 +964,20 @@
 
     const saved = loadJSON(KEY_GEOMETRY, null);
     const hasSaved = saved && ['x', 'y', 'w', 'h'].every(k => typeof saved[k] === 'number' && !isNaN(saved[k]));
-    // Following is the default; only an explicit `follow: false` (written when the user
-    // dragged or resized the panel) turns it off.
-    follow = !hasSaved || saved.follow !== false;
-    geometry = follow ? followGeometry() : null;
+    anchor = hasSaved && validAnchor(saved.anchor) ? saved.anchor : null;
+    // Migrate a pre-6.4 save: `follow: false` meant a manual placement, so turn that rect
+    // into the equivalent offsets; anything else was tracking the sidebar and resets.
+    if (!anchor && hasSaved && saved.follow === false && saved.vw && saved.vh) {
+      const sx = sidebarLeft();
+      anchor = {
+        left:   sx === null ? FOLLOW_INSET : Math.round(saved.x - sx),
+        top:    Math.round(saved.y),
+        right:  Math.round(saved.vw - (saved.x + saved.w)),
+        bottom: Math.round(saved.vh - (saved.y + saved.h)),
+      };
+    }
+    if (!anchor) anchor = defaultAnchor();
+    geometry = anchorToGeometry(anchor);
     if (!geometry) geometry = hasSaved ? adaptGeometry(saved) : clampGeometry(defaultGeometry());
     saveGeometry();
 
@@ -938,7 +989,7 @@
     applyTheme(panel);
     layoutPanel();
     sessionStorage.setItem(SS_OPEN, '1');
-    scheduleFollowRetries();
+    scheduleAnchorRetries();
 
     renderList();
     refresh(true);
@@ -950,8 +1001,8 @@
     stopAutoRefresh();
     clearInterval(footClockTimer);
     footClockTimer = null;
-    for (const t of followRetryTimers) clearTimeout(t);
-    followRetryTimers = [];
+    for (const t of anchorRetryTimers) clearTimeout(t);
+    anchorRetryTimers = [];
     closeMenus();
     if (panel) panel.remove();
     panel = null;
@@ -960,16 +1011,17 @@
 
   function togglePanel() { if (isOpen()) closePanel(); else openPanel(); }
 
-  // Reset puts the panel back over the sidebar and re-enables following; without a sidebar
-  // it falls back to the bottom-right default (and starts following once one appears).
+  // Reset restores the standard offsets: FOLLOW_INSET inside the sidebar's top-left corner,
+  // right and bottom flush with the window. Without a sidebar it falls back to the
+  // bottom-right default (and takes up the standard offsets once one appears).
   function resetPanel() {
-    follow = true;
     minimized = false;
     sessionStorage.removeItem(SS_MINIMIZED);
     if (panel) { panel.classList.remove('rnfp-minimized'); updateMinButton(); }
-    geometry = followGeometry() || clampGeometry(defaultGeometry());
+    anchor = defaultAnchor();
+    geometry = anchorToGeometry(anchor) || clampGeometry(defaultGeometry());
     saveGeometry();
-    if (!isOpen()) openPanel(); else { layoutPanel(); scheduleFollowRetries(); }
+    if (!isOpen()) openPanel(); else { layoutPanel(); scheduleAnchorRetries(); }
   }
 
   function updateMinButton() {
@@ -997,13 +1049,15 @@
       layoutPanel();
     }
   }
-  // After an SPA navigation the sidebar may have moved (home starts it under the header, a
-  // subreddit under its banner) or be about to render, so re-align now and again shortly.
+  // After an SPA navigation the sidebar may be about to render, so re-apply the anchor now
+  // and again shortly. Only the left edge can move as a result: the panel's vertical position
+  // is measured from the window, so navigating between pages whose sidebars start at
+  // different heights (home under the header, a subreddit under its banner) does not shift it.
   function onNavigated() {
     ensureAttached();
     if (!isOpen()) return;
-    applyFollow(true);
-    scheduleFollowRetries();
+    applyAnchor(true);
+    scheduleAnchorRetries();
   }
   if (window.navigation && typeof window.navigation.addEventListener === 'function') {
     window.navigation.addEventListener('navigatesuccess', () => setTimeout(onNavigated, 0));
@@ -1054,8 +1108,11 @@
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
         panel.classList.remove('rnfp-dragging');
-        if (moved) follow = false;   // a manual placement wins until the next reset
-        setGeometry(geometry, true);
+        // Rewrite the offsets rather than stop tracking: the panel keeps following the
+        // sidebar and the window edges, just from wherever the user put it.
+        setGeometry(geometry, false);
+        if (moved) anchor = geometryToAnchor(geometry);
+        saveGeometry();
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
@@ -1105,8 +1162,9 @@
           window.removeEventListener('pointerup', up);
           window.removeEventListener('pointercancel', up);
           panel.classList.remove('rnfp-dragging');
-          if (moved) follow = false;
-          setGeometry(geometry, true);
+          setGeometry(geometry, false);
+          if (moved) anchor = geometryToAnchor(geometry);
+          saveGeometry();
         };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
