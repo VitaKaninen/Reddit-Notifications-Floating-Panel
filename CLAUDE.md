@@ -28,6 +28,18 @@ its own list. Everything below was verified live in Chrome on 2026-09-02.
   Others seen: `NotificationInboxFeed`, `InboxBadgeIndicator`, `UpdateInboxActivitySeenState`,
   `DeleteInboxNotifications`.
 
+## Unread styling — deliberate, don't "fix" it back to orange
+
+Asked for by the user 2026-09-02. **Rows carry no accent color at all.** Unread is signalled
+by contrast, not hue: an unread row sits at full strength (title `--text`, weight 700, avatar
+and body at opacity 1) and a read row recedes (title `--muted`, weight 600, avatar `.5`,
+body/meta `.65`). Hovering any row restores full opacity. There is no orange row tint and no
+unread dot — both were removed in v6.1.0.
+
+The **header** is the one place accent survives, because Reddit's own top-bar badge trains you
+to look for orange there: on unread the title text goes brighter and larger (`--text`, 14px,
+from `--muted`, 13px) while only the bell icon and the count badge are `--accent`.
+
 **Verified with the installed v6.0.0 (2026-09-02):** unread detection and badge, per-item
 mark read (server confirmed via re-fetch of the partial), Mark all as read issued from
 old.reddit through `GM_xmlhttpRequest` (server confirmed on www, Reddit's own bell badge

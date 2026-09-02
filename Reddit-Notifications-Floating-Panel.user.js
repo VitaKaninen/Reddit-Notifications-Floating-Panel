@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.0.0
+// @version      6.1.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -339,6 +339,13 @@
     return Math.floor(d / 365) + 'y';
   }
 
+  // "now" already reads as a time; only the elapsed forms take " ago".
+  function agoLabel(item) {
+    const rel = relativeTime(item.datetime, item.timeText);
+    if (!rel || rel === 'now') return rel;
+    return item.datetime ? rel + ' ago' : rel;
+  }
+
   function refreshLabel(ms) {
     if (!ms) return 'Off';
     const preset = REFRESH_OPTIONS.find(o => o.ms === ms);
@@ -382,7 +389,6 @@
       --text:      #d7dadc;
       --muted:     #8a8d91;
       --accent:    #ff4500;
-      --accent2:   #ff6a33;
       --danger:    #c0392b;
       --shadow:    0 8px 24px rgba(0,0,0,.6);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -450,11 +456,14 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      transition: color .15s, font-size .15s;
     }
-    #${PANEL_ID} .rnfp-title svg { flex: 0 0 auto; }
+    #${PANEL_ID} .rnfp-title svg { flex: 0 0 auto; color: var(--muted); transition: color .15s; }
     #${PANEL_ID} .rnfp-title .rnfp-title-text { overflow: hidden; text-overflow: ellipsis; }
-    #${PANEL_ID} .rnfp-title.has-unread { color: var(--accent); }
-    #${PANEL_ID} .rnfp-title.has-unread svg { animation: rnfp-ring .9s ease .1s; }
+    /* Unread header: brighter and larger text. Only the bell and count carry the accent,
+       matching what Reddit's own header badge trains you to look for. */
+    #${PANEL_ID} .rnfp-title.has-unread { color: var(--text); font-size: 14px; }
+    #${PANEL_ID} .rnfp-title.has-unread svg { color: var(--accent); animation: rnfp-ring .9s ease .1s; }
     @keyframes rnfp-ring {
       0%,100% { transform: rotate(0); } 15% { transform: rotate(15deg); } 30% { transform: rotate(-12deg); }
       45% { transform: rotate(10deg); } 60% { transform: rotate(-8deg); } 75% { transform: rotate(5deg); }
@@ -515,18 +524,6 @@
       transition: background .12s;
     }
     #${PANEL_ID} .rnfp-item:hover { background: var(--bg2); }
-    #${PANEL_ID} .rnfp-item.unread { background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
-    #${PANEL_ID} .rnfp-item.unread:hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
-    #${PANEL_ID} .rnfp-item.unread::before {
-      content: '';
-      position: absolute;
-      left: 4px;
-      top: 15px;
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--accent);
-    }
     #${PANEL_ID} .rnfp-avatar {
       flex: 0 0 32px;
       width: 32px;
@@ -541,9 +538,16 @@
       overflow: hidden;
     }
     #${PANEL_ID} .rnfp-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-    #${PANEL_ID} .rnfp-item-title { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
-    #${PANEL_ID} .rnfp-item.unread .rnfp-item-title { color: var(--accent2); }
-    #${PANEL_ID}.rnfp-light .rnfp-item.unread .rnfp-item-title { color: #d93a00; }
+    /* Unread is marked by contrast, not hue: an unread row sits at full strength and a
+       read one recedes. Nothing here depends on a color, so it works in both themes. */
+    #${PANEL_ID} .rnfp-item-title { font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+    #${PANEL_ID} .rnfp-item.unread .rnfp-item-title { font-weight: 700; color: var(--text); }
+    #${PANEL_ID} .rnfp-item:not(.unread) .rnfp-avatar { opacity: .5; }
+    #${PANEL_ID} .rnfp-item:not(.unread) .rnfp-item-body,
+    #${PANEL_ID} .rnfp-item:not(.unread) .rnfp-item-meta { opacity: .65; }
+    #${PANEL_ID} .rnfp-item:hover .rnfp-avatar,
+    #${PANEL_ID} .rnfp-item:hover .rnfp-item-body,
+    #${PANEL_ID} .rnfp-item:hover .rnfp-item-meta { opacity: 1; }
     #${PANEL_ID} .rnfp-item-body {
       color: var(--muted);
       overflow: hidden;
@@ -1193,7 +1197,7 @@
       el('div', { class: 'rnfp-main' },
         el('div', { class: 'rnfp-item-title', text: item.title || '(notification)' }),
         el('div', { class: 'rnfp-item-body', text: item.body }),
-        el('div', { class: 'rnfp-item-meta', text: relativeTime(item.datetime, item.timeText) + (item.datetime ? ' ago' : '') }),
+        el('div', { class: 'rnfp-item-meta', text: agoLabel(item) }),
       ),
       el('div', { class: 'rnfp-item-actions' }, item.unread ? markBtn : null, openBtn),
     );
