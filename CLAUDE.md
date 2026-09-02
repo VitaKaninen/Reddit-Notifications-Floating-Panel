@@ -28,10 +28,13 @@ its own list. Everything below was verified live in Chrome on 2026-09-02.
   Others seen: `NotificationInboxFeed`, `InboxBadgeIndicator`, `UpdateInboxActivitySeenState`,
   `DeleteInboxNotifications`.
 
+**Verified with the installed v6.0.0 (2026-09-02):** unread detection and badge, per-item
+mark read (server confirmed via re-fetch of the partial), Mark all as read issued from
+old.reddit through `GM_xmlhttpRequest` (server confirmed on www, Reddit's own bell badge
+cleared), old.reddit bell menu + RES night-mode theme detection.
+
 **Not yet verified:** "Load more" (needs >20 notifications; the code looks for a nested
-`faceplate-partial` whose `src` contains `notification`), and the old.reddit path (uses
-`GM_xmlhttpRequest` cross-origin to www — needs the script installed in Tampermonkey, the
-in-page injection test cannot exercise it).
+`faceplate-partial` whose `src` contains `notification`).
 
 ## Why v5 broke (post-mortem, all confirmed live 2026-09-02)
 
