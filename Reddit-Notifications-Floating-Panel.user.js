@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.1.0
+// @version      6.2.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -58,6 +58,17 @@
   const MIN_REFRESH_MS = 10000;
   const REQUEST_TIMEOUT_MS = 20000;
 
+  // Sidebar following: by default the panel sits over the page's right sidebar, inset so
+  // this many px of the sidebar stay visible above and to the left of it, and it re-derives
+  // its geometry from the sidebar on every window resize until the user drags or resizes it.
+  // `box` is the element whose visible vertical extent we use (the sticky, viewport-sized
+  // container on www); `inner` gives the horizontal extent (the 306px content column, which
+  // excludes the container's scrollbar gutter, so our right edge lines up with the card).
+  const FOLLOW_INSET = 20;
+  const SIDEBAR = IS_OLD_REDDIT
+    ? { box: '.side', inner: '.side' }
+    : { box: '#right-sidebar-container', inner: '#right-sidebar-contents' };
+
   const REFRESH_OPTIONS = [
     { label: '30 sec', ms: 30000 },
     { label: '1 min',  ms: 60000 },
@@ -106,9 +117,9 @@
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('width', size);
     svg.setAttribute('height', size);
-    svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('aria-hidden', 'true');
-    const o = Object.assign({ fill: 'none', stroke: 'currentColor', width: 2 }, opts || {});
+    const o = Object.assign({ fill: 'none', stroke: 'currentColor', width: 2, viewBox: '0 0 24 24' }, opts || {});
+    svg.setAttribute('viewBox', o.viewBox);
     svg.setAttribute('fill', o.fill);
     svg.setAttribute('stroke', o.stroke);
     svg.setAttribute('stroke-width', String(o.width));
@@ -123,7 +134,9 @@
   }
 
   const ICON = {
-    bell:     () => svgIcon(['M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6V11c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z'], 15, { fill: 'currentColor', stroke: 'none' }),
+    // Reddit's own header bell (`icon-name="notifications"`, 20x20), copied verbatim so the
+    // panel header mirrors the top bar.
+    bell:     () => svgIcon(['m18.176 14.218-.925-1.929a2.577 2.577 0 01-.25-1.105V8c0-3.86-3.142-7-7-7-3.86 0-7 3.14-7 7v3.184c0 .38-.088.762-.252 1.105l-.927 1.932A1.103 1.103 0 002.82 15.8h3.26A4.007 4.007 0 0010 19a4.008 4.008 0 003.918-3.2h3.26a1.1 1.1 0 00.934-.514 1.1 1.1 0 00.062-1.068h.002ZM10 17.2c-.93 0-1.722-.583-2.043-1.4h4.087a2.197 2.197 0 01-2.043 1.4ZM3.925 14l.447-.933c.28-.584.43-1.235.43-1.883V8c0-2.867 2.331-5.2 5.198-5.2A5.205 5.205 0 0115.2 8v3.184c0 .648.147 1.299.428 1.883l.447.933H3.925Z'], 20, { fill: 'currentColor', stroke: 'none', viewBox: '0 0 20 20' }),
     check:    () => svgIcon(['M20 6 9 17l-5-5'], 14),
     checkAll: () => svgIcon(['M18 6 7 17l-5-5', 'm22 10-7.5 7.5L13 16'], 14),
     reload:   () => svgIcon(['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'], 14),
@@ -211,6 +224,31 @@
       top:    Math.abs(g.y) <= SNAP,
       bottom: Math.abs(g.y + g.h - vp.h) <= SNAP,
     };
+  }
+
+  // Viewport-clipped rectangle of the page's right sidebar, or null when the page has none
+  // or Reddit has hidden it (below its `s` breakpoint the container is display:none, so its
+  // rect collapses to 0x0).
+  function sidebarRect() {
+    const box = document.querySelector(SIDEBAR.box);
+    if (!box) return null;
+    const inner = document.querySelector(SIDEBAR.inner) || box;
+    const b = box.getBoundingClientRect();
+    const i = inner.getBoundingClientRect();
+    if (b.width < 1 || b.height < 1 || i.width < 1) return null;
+    const vp = viewport();
+    const top = Math.max(0, b.top), bottom = Math.min(vp.h, b.bottom);
+    if (bottom - top < MIN_H + FOLLOW_INSET) return null;
+    return { x: i.left, y: top, w: i.width, h: bottom - top };
+  }
+
+  // Geometry that sits over the sidebar leaving FOLLOW_INSET px of it showing above and to
+  // the left; right and bottom edges line up with the sidebar's. Null when there is no
+  // usable sidebar, in which case callers keep whatever geometry they already have.
+  function followGeometry() {
+    const s = sidebarRect();
+    if (!s) return null;
+    return clampGeometry({ x: s.x + FOLLOW_INSET, y: s.y + FOLLOW_INSET, w: s.w - FOLLOW_INSET, h: s.h - FOLLOW_INSET });
   }
 
   // ---------------------------------------------------------------------------
@@ -389,6 +427,7 @@
       --text:      #d7dadc;
       --muted:     #8a8d91;
       --accent:    #ff4500;
+      --badge:     #d93900;   /* Reddit's --color-brand-background, sampled from its inbox badge */
       --danger:    #c0392b;
       --shadow:    0 8px 24px rgba(0,0,0,.6);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -438,7 +477,7 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 0 6px 0 10px;
+      padding: 0 4px 0 8px;
       background: var(--bg2);
       border-bottom: 1px solid var(--border);
       cursor: grab;
@@ -449,45 +488,69 @@
       min-width: 0;
       display: flex;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
       font-weight: 700;
       font-size: 13px;
       color: var(--muted);
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
       transition: color .15s, font-size .15s;
     }
-    #${PANEL_ID} .rnfp-title svg { flex: 0 0 auto; color: var(--muted); transition: color .15s; }
-    #${PANEL_ID} .rnfp-title .rnfp-title-text { overflow: hidden; text-overflow: ellipsis; }
-    /* Unread header: brighter and larger text. Only the bell and count carry the accent,
-       matching what Reddit's own header badge trains you to look for. */
+    #${PANEL_ID} .rnfp-title .rnfp-title-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* Bell + badge: a copy of Reddit's top-bar inbox button. The 20px icon sits in a 28px slot
+       so the badge, which hangs off its top-right corner, has room to grow to the right. */
+    #${PANEL_ID} .rnfp-bell {
+      position: relative;
+      flex: 0 0 28px;
+      width: 28px;
+      height: 20px;
+      color: var(--muted);
+      transition: color .15s;
+    }
+    #${PANEL_ID} .rnfp-bell svg { display: block; width: 20px; height: 20px; transform-origin: 50% 15%; }
+    /* Unread header: brighter, larger text and a full-strength bell; the badge alone carries
+       colour, exactly like Reddit's own header. */
     #${PANEL_ID} .rnfp-title.has-unread { color: var(--text); font-size: 14px; }
-    #${PANEL_ID} .rnfp-title.has-unread svg { color: var(--accent); animation: rnfp-ring .9s ease .1s; }
+    #${PANEL_ID} .rnfp-title.has-unread .rnfp-bell { color: var(--text); }
+    #${PANEL_ID} .rnfp-title.has-unread .rnfp-bell svg { animation: rnfp-ring .9s ease .1s; }
     @keyframes rnfp-ring {
       0%,100% { transform: rotate(0); } 15% { transform: rotate(15deg); } 30% { transform: rotate(-12deg); }
       45% { transform: rotate(10deg); } 60% { transform: rotate(-8deg); } 75% { transform: rotate(5deg); }
     }
+    /* Reddit's <dynamic-badge appearance="ALERT"> as measured live (2026-09-02): 16px pill,
+       10px/16px semibold, 0 4px padding, min-width 8px, anchored 14px in and 6px up from the
+       20px icon's top-left. */
     #${PANEL_ID} .rnfp-count {
-      flex: 0 0 auto;
-      background: var(--accent);
+      position: absolute;
+      top: -6px;
+      left: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 16px;
+      min-width: 16px;   /* Reddit's 8px min-width + 4px padding each side; we are border-box */
+      padding: 0 4px;
+      border-radius: 9999px;
+      background: var(--badge);
       color: #fff;
-      border-radius: 10px;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 1px 6px;
-      line-height: 1.3;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 16px;
+      letter-spacing: -.01px;
+      text-align: center;
+      white-space: nowrap;
+      pointer-events: none;
     }
     #${PANEL_ID} .rnfp-count:empty { display: none; }
 
-    #${PANEL_ID} .rnfp-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+    /* Kept tight so "Notifications" still fits when the panel follows the 306px sidebar. */
+    #${PANEL_ID} .rnfp-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
     #${PANEL_ID} .rnfp-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       height: 24px;
-      min-width: 24px;
-      padding: 0 5px;
+      min-width: 22px;
+      padding: 0 4px;
       background: transparent;
       border: 1px solid transparent;
       border-radius: 5px;
@@ -502,7 +565,7 @@
     @keyframes rnfp-spin { to { transform: rotate(360deg); } }
     #${PANEL_ID} .rnfp-split { display: inline-flex; align-items: center; }
     #${PANEL_ID} .rnfp-split .rnfp-btn:first-child { border-radius: 5px 0 0 5px; }
-    #${PANEL_ID} .rnfp-split .rnfp-btn:last-child  { border-radius: 0 5px 5px 0; min-width: 18px; padding: 0 2px; }
+    #${PANEL_ID} .rnfp-split .rnfp-btn:last-child  { border-radius: 0 5px 5px 0; min-width: 14px; padding: 0 1px; }
 
     /* Body */
     #${PANEL_ID} .rnfp-body {
@@ -725,6 +788,8 @@
   let panel = null;
   const ui = {};                 // element refs
   let geometry = null;           // { x, y, w, h } of the *restored* (non-minimized) panel
+  let follow = true;             // geometry tracks the page's right sidebar until the user drags/resizes
+  let followRetryTimers = [];    // late re-alignments for sidebars that render after the panel opens
   let minimized = false;
   let items = [];
   let moreUrl = null;
@@ -744,7 +809,27 @@
   function saveGeometry() {
     if (!geometry) return;
     const vp = viewport();
-    saveJSON(KEY_GEOMETRY, { ...geometry, vw: vp.w, vh: vp.h });
+    saveJSON(KEY_GEOMETRY, { ...geometry, vw: vp.w, vh: vp.h, follow });
+  }
+
+  // Re-derive the geometry from the sidebar. Returns false (and changes nothing) when not
+  // following or when no usable sidebar exists right now, so a sidebar that Reddit hides at
+  // a narrow width simply leaves the panel where it last was.
+  function applyFollow(persist) {
+    if (!follow || !isOpen()) return false;
+    const g = followGeometry();
+    if (!g) return false;
+    geometry = g;
+    layoutPanel();
+    if (persist) saveGeometry();
+    return true;
+  }
+
+  // Reddit's right rail is a lazily loaded partial, so it can land after the panel is up
+  // (on boot and after SPA navigations). Two delayed re-checks catch that without polling.
+  function scheduleFollowRetries() {
+    for (const t of followRetryTimers) clearTimeout(t);
+    followRetryTimers = [800, 2500].map(ms => setTimeout(() => applyFollow(true), ms));
   }
 
   // Position the panel element from `geometry` + `minimized`.
@@ -772,6 +857,7 @@
 
   function onViewportResize() {
     if (!isOpen() || !geometry) return;
+    if (applyFollow(true)) return;
     const saved = loadJSON(KEY_GEOMETRY, null);
     const base = { ...geometry, vw: saved && saved.vw, vh: saved && saved.vh };
     setGeometry(adaptGeometry(base), true);
@@ -784,7 +870,8 @@
   function buildPanel() {
     ui.titleText = el('span', { class: 'rnfp-title-text', text: 'Notifications' });
     ui.count     = el('span', { class: 'rnfp-count' });
-    ui.title     = el('div', { class: 'rnfp-title' }, ICON.bell(), ui.titleText, ui.count);
+    ui.bell      = el('span', { class: 'rnfp-bell' }, ICON.bell(), ui.count);
+    ui.title     = el('div', { class: 'rnfp-title' }, ui.bell, ui.titleText);
 
     ui.markAllBtn  = el('button', { class: 'rnfp-btn', type: 'button', title: 'Mark all as read', 'aria-label': 'Mark all as read', onclick: onMarkAllClick }, ICON.checkAll());
     ui.reloadBtn   = el('button', { class: 'rnfp-btn', type: 'button', title: 'Reload', 'aria-label': 'Reload', onclick: () => refresh(true) }, ICON.reload());
@@ -835,8 +922,12 @@
 
     const saved = loadJSON(KEY_GEOMETRY, null);
     const hasSaved = saved && ['x', 'y', 'w', 'h'].every(k => typeof saved[k] === 'number' && !isNaN(saved[k]));
-    geometry = hasSaved ? adaptGeometry(saved) : clampGeometry(defaultGeometry());
-    if (!hasSaved) saveGeometry();
+    // Following is the default; only an explicit `follow: false` (written when the user
+    // dragged or resized the panel) turns it off.
+    follow = !hasSaved || saved.follow !== false;
+    geometry = follow ? followGeometry() : null;
+    if (!geometry) geometry = hasSaved ? adaptGeometry(saved) : clampGeometry(defaultGeometry());
+    saveGeometry();
 
     minimized = sessionStorage.getItem(SS_MINIMIZED) === '1';
     panel.classList.toggle('rnfp-minimized', minimized);
@@ -846,6 +937,7 @@
     applyTheme(panel);
     layoutPanel();
     sessionStorage.setItem(SS_OPEN, '1');
+    scheduleFollowRetries();
 
     renderList();
     refresh(true);
@@ -857,6 +949,8 @@
     stopAutoRefresh();
     clearInterval(footClockTimer);
     footClockTimer = null;
+    for (const t of followRetryTimers) clearTimeout(t);
+    followRetryTimers = [];
     closeMenus();
     if (panel) panel.remove();
     panel = null;
@@ -865,14 +959,16 @@
 
   function togglePanel() { if (isOpen()) closePanel(); else openPanel(); }
 
+  // Reset puts the panel back over the sidebar and re-enables following; without a sidebar
+  // it falls back to the bottom-right default (and starts following once one appears).
   function resetPanel() {
-    const g = defaultGeometry();
+    follow = true;
     minimized = false;
     sessionStorage.removeItem(SS_MINIMIZED);
     if (panel) { panel.classList.remove('rnfp-minimized'); updateMinButton(); }
-    geometry = clampGeometry(g);
+    geometry = followGeometry() || clampGeometry(defaultGeometry());
     saveGeometry();
-    if (!isOpen()) openPanel(); else layoutPanel();
+    if (!isOpen()) openPanel(); else { layoutPanel(); scheduleFollowRetries(); }
   }
 
   function updateMinButton() {
@@ -900,10 +996,18 @@
       layoutPanel();
     }
   }
-  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
-    window.navigation.addEventListener('navigatesuccess', () => setTimeout(ensureAttached, 0));
+  // After an SPA navigation the sidebar may have moved (home starts it under the header, a
+  // subreddit under its banner) or be about to render, so re-align now and again shortly.
+  function onNavigated() {
+    ensureAttached();
+    if (!isOpen()) return;
+    applyFollow(true);
+    scheduleFollowRetries();
   }
-  window.addEventListener('popstate', () => setTimeout(ensureAttached, 0));
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigatesuccess', () => setTimeout(onNavigated, 0));
+  }
+  window.addEventListener('popstate', () => setTimeout(onNavigated, 0));
 
   // ---------------------------------------------------------------------------
   // Drag & resize (pointer events; the header is the drag handle)
@@ -918,8 +1022,10 @@
       const offX = e.clientX - rect.left;
       const offY = e.clientY - rect.top;
       const startMinimized = minimized;
+      let moved = false;
       panel.classList.add('rnfp-dragging');
       const move = ev => {
+        moved = true;
         const vp = viewport();
         const h = startMinimized ? HEADER_H : geometry.h;
         let x = ev.clientX - offX;
@@ -947,6 +1053,7 @@
         window.removeEventListener('pointerup', up);
         window.removeEventListener('pointercancel', up);
         panel.classList.remove('rnfp-dragging');
+        if (moved) follow = false;   // a manual placement wins until the next reset
         setGeometry(geometry, true);
       };
       window.addEventListener('pointermove', move);
@@ -964,8 +1071,10 @@
         closeMenus();
         const dir = handle.dataset.dir;
         const start = { x: e.clientX, y: e.clientY, g: { ...geometry } };
+        let moved = false;
         panel.classList.add('rnfp-dragging');
         const move = ev => {
+          moved = true;
           const vp = viewport();
           const dx = ev.clientX - start.x, dy = ev.clientY - start.y;
           let { x, y, w, h } = start.g;
@@ -995,6 +1104,7 @@
           window.removeEventListener('pointerup', up);
           window.removeEventListener('pointercancel', up);
           panel.classList.remove('rnfp-dragging');
+          if (moved) follow = false;
           setGeometry(geometry, true);
         };
         window.addEventListener('pointermove', move);
@@ -1213,7 +1323,6 @@
     ui.count.textContent = unread > 0 ? String(unread) : '';
     const had = ui.title.classList.contains('has-unread');
     ui.title.classList.toggle('has-unread', unread > 0);
-    ui.titleText.textContent = unread > 0 ? 'New notifications' : 'Notifications';
     ui.markAllBtn.disabled = unread === 0;
     if (unread > lastUnread && had) {
       // Re-trigger the ring animation when more unread arrive while already unread.

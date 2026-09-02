@@ -36,9 +36,33 @@ and body at opacity 1) and a read row recedes (title `--muted`, weight 600, avat
 body/meta `.65`). Hovering any row restores full opacity. There is no orange row tint and no
 unread dot — both were removed in v6.1.0.
 
-The **header** is the one place accent survives, because Reddit's own top-bar badge trains you
-to look for orange there: on unread the title text goes brighter and larger (`--text`, 14px,
-from `--muted`, 13px) while only the bell icon and the count badge are `--accent`.
+The **header** mirrors Reddit's own top-bar inbox button (v6.2.0, asked for 2026-09-02): the
+title is always "Notifications"; on unread it goes brighter and larger (`--text`, 14px, from
+`--muted`, 13px), the bell goes `--muted` → `--text`, and **only the badge carries colour**.
+The bell is Reddit's 20×20 `icon-name="notifications"` path verbatim; the badge is a copy of
+its `<dynamic-badge appearance="ALERT">` measured live: 16px pill, `#d93900`
+(`--color-brand-background`), 10px/16px weight 600, `0 4px` padding, anchored **14px in and
+6px up** from the icon's top-left so it overlaps the bell's top-right corner. Header controls
+are deliberately tight (2px gap, 22px buttons, 14px chevron) so "Notifications" at 14px still
+fits in the 286px sidebar-following width — widen anything there and it truncates again.
+
+## Geometry follows the right sidebar (v6.2.0)
+
+Default placement is **over the page's right sidebar, inset 20px on top and left**, right and
+bottom edges flush with the sidebar's viewport-clipped rect, re-derived on every window
+resize and SPA navigation. Dragging or resizing the panel writes `follow: false` into the
+saved geometry and it becomes a fixed placement (adapted to the viewport as before);
+"Reset panel position & size" / "Reset panel location" turn following back on. When Reddit
+hides the sidebar (below its `s` breakpoint the container is `display:none`) or the page has
+none, the panel keeps its last geometry — it does not fall back to bottom-right unless there
+is no saved geometry at all.
+
+Selectors (verified live 2026-09-02): www uses `#right-sidebar-container` (sticky,
+316px × viewport-minus-header, includes a 10px scrollbar gutter) for the vertical extent and
+`#right-sidebar-contents` (306px, the visible card) for the horizontal one; home starts it at
+y=56, a subreddit at y=192 under the banner. old.reddit uses `.side` (300px) for both. Reddit's
+right rail is a lazy `faceplate-partial`, so `applyFollow` is retried at 0.8s and 2.5s after
+open / navigation instead of observing for it.
 
 **Verified with the installed v6.0.0 (2026-09-02):** unread detection and badge, per-item
 mark read (server confirmed via re-fetch of the partial), Mark all as read issued from
@@ -70,7 +94,13 @@ the page create a `<textarea>`, focus it, `computer key ctrl+v`, read `.value`, 
 Shim `GM_getValue/GM_setValue` (localStorage) and `GM_openInTab` (record into an array) first and
 set `sessionStorage['rnfp.open']='1'` so the panel auto-opens. Test on the **home page**, not
 `/notifications/`, while the old v5 is still installed (it hijacks clicks there), and close the
-v5 panel first. The tool's output filter blocks any result containing URL query strings or
+v5 panel first. **Also remove the installed build's `<style>`** (every `style` whose text
+contains `rnfp-ring`) along with `#rnfp-panel`/`#rnfp-loaded` before eval — otherwise its
+rules cascade onto the test build and you debug styling that isn't yours (cost 2026-09-02:
+an "orange bell" that was v6.1's stylesheet). The pasted `<textarea>` must be **clicked**
+with the `computer` tool before `ctrl+v`; `.focus()` from JS is not enough. The installed
+build's `window`-capture bell handler runs first and swallows the right-click, so drive the
+test build via its own gear menu, not the bell context menu. The tool's output filter blocks any result containing URL query strings or
 cookie-looking values — dump tag/attribute *names* and counts, never `outerHTML`/`href`.
 
 ## Dark Reader blanks Reddit (black screen) — not NoScript/uBlock
