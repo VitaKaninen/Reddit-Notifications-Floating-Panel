@@ -103,6 +103,42 @@ cleared), old.reddit bell menu + RES night-mode theme detection.
 **Not yet verified:** "Load more" (needs >20 notifications; the code looks for a nested
 `faceplate-partial` whose `src` contains `notification`).
 
+## Tab title indicator (v6.5.0)
+
+Asked for 2026-09-02: flash the tab twice when a notification arrives, then leave the count at
+the front of the title, the way YouTube and Discord do. **No `@grant` and no permission prompt
+are involved** — the tab title is plain DOM. (The alternatives, for reference: `GM_notification`
+for an OS toast, which does need a grant; the Web Notifications API, which needs a per-origin
+permission the user must accept; and repainting the favicon, which is how those sites do the
+icon half of the effect.)
+
+- Badge is `(n) ` prefixed to Reddit's own title. Flash = the whole title blinks between
+  `New notification` / `n new notifications` and the badged title, twice, 800ms a frame,
+  because a tab only shows a dozen or so characters and a change confined to the tail of the
+  string is invisible.
+- **Reddit rewrites the title on every SPA navigation**, so `watchTitle()` observes `<head>`
+  (not `<title>` — the element can be replaced wholesale, not just its text node) and
+  re-applies the badge. `titleWritten` holds the exact string we last set so our own writes
+  are told apart from Reddit's; anything else becomes the new base title, stripped of any
+  leftover `(n) `.
+- **Never flashes for a count that was already there.** `updateBadge` only touches the title
+  once `lastLoadedAt` is set (`renderList()` also runs with an empty list before the first
+  fetch), and `titleSeeded` suppresses the flash on the first loaded count. `closePanel`
+  clears both the badge and the seed, so reopening does not flash either.
+- Two nested settings, both on by default: `titleCount` ("Show the count in the tab title")
+  and `titleFlash` ("Flash the tab when they arrive"), the latter greying out when the former
+  is off — the same pattern as the new-tab pair.
+- **Limitation, by design:** the badge only tracks while the panel is open, because that is
+  the only time the script polls the inbox. Closing the panel restores the plain title. Making
+  it work with the panel closed means a background poller, which is a deliberately bigger change.
+
+**Verified live 2026-09-02** on www with the inbox partial stubbed so the first load reported
+0 unread and the next reported the real count (no writes to the account): title sequence came
+back as `Testing` → `New notification` → `(1) Testing` → `New notification` → `(1) Testing`;
+an external `document.title` write and a real SPA navigation to the home page were both
+re-badged; dropping to 0 unread, toggling `titleCount` off, and closing the panel each restored
+the plain title.
+
 ## Why v5 broke (post-mortem, all confirmed live 2026-09-02)
 
 1. **Every click on `/notifications/` was hijacked.** v5's document-level capture handler

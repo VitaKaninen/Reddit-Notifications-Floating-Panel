@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.4.0
+// @version      6.5.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -89,7 +89,13 @@
     newTab: true,
     switchTab: true,
     markReadOnOpen: true,
+    titleCount: true,
+    titleFlash: true,
   };
+
+  // Tab title indicator: how many times the title blinks when the unread count goes up.
+  const FLASH_CYCLES = 2;
+  const FLASH_MS     = 800;
 
   // ---------------------------------------------------------------------------
   // Small DOM helpers (no innerHTML anywhere)
@@ -1003,6 +1009,7 @@
     footClockTimer = null;
     for (const t of anchorRetryTimers) clearTimeout(t);
     anchorRetryTimers = [];
+    clearTitle();
     closeMenus();
     if (panel) panel.remove();
     panel = null;
@@ -1272,10 +1279,19 @@
     const newTabRow = checkRow('Open links in a new tab', 'newTab', false, () => switchRow.row.classList.toggle('disabled', !settings.newTab));
     switchRow.row.classList.toggle('disabled', !settings.newTab);
     const markRow = checkRow('Mark read when opened', 'markReadOnOpen', false);
+    const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true);
+    const countRow = checkRow('Show the count in the tab title', 'titleCount', false, () => {
+      flashRow.row.classList.toggle('disabled', !settings.titleCount);
+      refreshTitle();
+    });
+    flashRow.row.classList.toggle('disabled', !settings.titleCount);
     menu.appendChild(newTabRow.row);
     menu.appendChild(switchRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(markRow.row);
+    menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
+    menu.appendChild(countRow.row);
+    menu.appendChild(flashRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(el('button', { class: 'rnfp-menu-item', type: 'button', role: 'menuitem', text: 'Reset panel position & size', onclick: () => { closeMenus(); resetPanel(); } }));
   }
@@ -1388,6 +1404,12 @@
       const svg = ui.title.querySelector('svg');
       if (svg) { svg.style.animation = 'none'; void svg.offsetWidth; svg.style.animation = ''; }
     }
+    // Only after a real fetch: renderList() also runs with an empty list before the first
+    // one, and a count that was already waiting when the panel opened must not flash.
+    if (lastLoadedAt) {
+      setTitleBadge(unread, titleSeeded);
+      titleSeeded = true;
+    }
     lastUnread = unread;
   }
 
@@ -1398,6 +1420,91 @@
     if (lastLoadedAt) parts.push('Updated ' + relativeTime(new Date(lastLoadedAt).toISOString(), '') + (Date.now() - lastLoadedAt >= 60000 ? ' ago' : ''));
     parts.push('Auto: ' + refreshLabel(settings.refreshMs));
     ui.footLeft.textContent = parts.join(' · ');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tab title indicator
+  //
+  // Needs no @grant and no permission prompt: the tab title is plain DOM. Reddit rewrites it
+  // on every SPA navigation, so a MutationObserver on <head> re-applies the badge and adopts
+  // anything it did not write itself as the new base title. The badge only tracks while the
+  // panel is open, because that is the only time the script polls the inbox.
+  // ---------------------------------------------------------------------------
+  let baseTitle       = document.title;
+  let titleCount      = 0;
+  let titleWritten    = null;   // the exact string we last set, to tell our writes from Reddit's
+  let titleFlashTimer = null;
+  let titleObserver   = null;
+  let titleSeeded     = false;  // the first count after opening is shown but never flashed
+
+  function stripBadge(t) {
+    const m = t.match(/^\(\d+\)\s([\s\S]+)$/);
+    return m ? m[1] : t;
+  }
+
+  function writeTitle(text) {
+    titleWritten = text;
+    if (document.title !== text) document.title = text;
+  }
+
+  function badgedTitle() {
+    return settings.titleCount && titleCount > 0 ? '(' + titleCount + ') ' + baseTitle : baseTitle;
+  }
+
+  function alertTitle() {
+    return titleCount > 1 ? titleCount + ' new notifications' : 'New notification';
+  }
+
+  function stopTitleFlash() {
+    if (titleFlashTimer) { clearTimeout(titleFlashTimer); titleFlashTimer = null; }
+  }
+
+  // Blink the whole title, so the change is visible in the few characters a tab actually
+  // shows, then settle on the "(n) " badge.
+  function startTitleFlash() {
+    stopTitleFlash();
+    let step = 0;
+    const tick = () => {
+      if (step >= FLASH_CYCLES * 2) { titleFlashTimer = null; writeTitle(badgedTitle()); return; }
+      writeTitle(step % 2 === 0 ? alertTitle() : badgedTitle());
+      step++;
+      titleFlashTimer = setTimeout(tick, FLASH_MS);
+    };
+    tick();
+  }
+
+  function watchTitle() {
+    if (titleObserver || !document.head) return;
+    baseTitle = stripBadge(document.title);
+    titleObserver = new MutationObserver(() => {
+      if (document.title === titleWritten) return;   // our own write echoing back
+      baseTitle = stripBadge(document.title);
+      writeTitle(titleFlashTimer ? alertTitle() : badgedTitle());
+    });
+    // <head>, not <title>: Reddit may replace the whole element rather than its text node.
+    titleObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+  }
+
+  function setTitleBadge(count, flash) {
+    const grew = flash && count > titleCount && count > 0;
+    titleCount = count;
+    if (!settings.titleCount) { stopTitleFlash(); writeTitle(baseTitle); return; }
+    watchTitle();
+    if (grew && settings.titleFlash) startTitleFlash();
+    else if (!titleFlashTimer) writeTitle(badgedTitle());
+  }
+
+  // Called when the settings toggles change.
+  function refreshTitle() {
+    if (isOpen()) setTitleBadge(titleCount, false);
+  }
+
+  function clearTitle() {
+    stopTitleFlash();
+    titleCount = 0;
+    titleSeeded = false;
+    if (titleObserver) { titleObserver.disconnect(); titleObserver = null; }
+    if (titleWritten !== null) { writeTitle(baseTitle); titleWritten = null; }
   }
 
   // ---------------------------------------------------------------------------
