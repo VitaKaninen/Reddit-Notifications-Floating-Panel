@@ -46,11 +46,12 @@ its `<dynamic-badge appearance="ALERT">` measured live: 16px pill, `#d93900`
 are deliberately tight (2px gap, 22px buttons, 14px chevron) so "Notifications" at 14px still
 fits in the 286px sidebar-following width — widen anything there and it truncates again.
 
-## Geometry follows the right sidebar (v6.2.0)
+## Geometry follows the right sidebar (v6.2.0, corrected in v6.3.0)
 
-Default placement is **over the page's right sidebar, inset 20px on top and left**, right and
-bottom edges flush with the sidebar's viewport-clipped rect, re-derived on every window
-resize and SPA navigation. Dragging or resizing the panel writes `follow: false` into the
+Default placement: **top-left corner 20px inside the sidebar's top-left corner, right and
+bottom edges docked to the viewport** (the user corrected v6.2.0, which had aligned the right
+edge to the sidebar card instead of the window). Re-derived on every window resize and SPA
+navigation. Dragging or resizing the panel writes `follow: false` into the
 saved geometry and it becomes a fixed placement (adapted to the viewport as before);
 "Reset panel position & size" / "Reset panel location" turn following back on. When Reddit
 hides the sidebar (below its `s` breakpoint the container is `display:none`) or the page has
@@ -58,8 +59,8 @@ none, the panel keeps its last geometry — it does not fall back to bottom-righ
 is no saved geometry at all.
 
 Selectors (verified live 2026-09-02): www uses `#right-sidebar-container` (sticky,
-316px × viewport-minus-header, includes a 10px scrollbar gutter) for the vertical extent and
-`#right-sidebar-contents` (306px, the visible card) for the horizontal one; home starts it at
+316px × viewport-minus-header, includes a 10px scrollbar gutter) for the top edge and
+`#right-sidebar-contents` (306px, the visible card) for the left one; home starts it at
 y=56, a subreddit at y=192 under the banner. old.reddit uses `.side` (300px) for both. Reddit's
 right rail is a lazy `faceplate-partial`, so `applyFollow` is retried at 0.8s and 2.5s after
 open / navigation instead of observing for it.

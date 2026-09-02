@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.2.0
+// @version      6.3.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -58,12 +58,12 @@
   const MIN_REFRESH_MS = 10000;
   const REQUEST_TIMEOUT_MS = 20000;
 
-  // Sidebar following: by default the panel sits over the page's right sidebar, inset so
-  // this many px of the sidebar stay visible above and to the left of it, and it re-derives
-  // its geometry from the sidebar on every window resize until the user drags or resizes it.
-  // `box` is the element whose visible vertical extent we use (the sticky, viewport-sized
-  // container on www); `inner` gives the horizontal extent (the 306px content column, which
-  // excludes the container's scrollbar gutter, so our right edge lines up with the card).
+  // Sidebar following: by default the panel's top-left corner sits this many px inside the
+  // page's right sidebar's top-left corner (so that much of the sidebar stays visible above
+  // and beside it) while its right and bottom edges stay docked to the viewport. It re-derives
+  // that on every window resize until the user drags or resizes it. `box` is the element
+  // whose top we use (the sticky container on www); `inner` gives the left edge (the 306px
+  // content column).
   const FOLLOW_INSET = 20;
   const SIDEBAR = IS_OLD_REDDIT
     ? { box: '.side', inner: '.side' }
@@ -226,29 +226,30 @@
     };
   }
 
-  // Viewport-clipped rectangle of the page's right sidebar, or null when the page has none
-  // or Reddit has hidden it (below its `s` breakpoint the container is display:none, so its
-  // rect collapses to 0x0).
-  function sidebarRect() {
+  // Top-left corner of the page's right sidebar (clipped to the viewport), or null when the
+  // page has none or Reddit has hidden it (below its `s` breakpoint the container is
+  // display:none, so its rect collapses to 0x0).
+  function sidebarOrigin() {
     const box = document.querySelector(SIDEBAR.box);
     if (!box) return null;
     const inner = document.querySelector(SIDEBAR.inner) || box;
     const b = box.getBoundingClientRect();
     const i = inner.getBoundingClientRect();
     if (b.width < 1 || b.height < 1 || i.width < 1) return null;
-    const vp = viewport();
-    const top = Math.max(0, b.top), bottom = Math.min(vp.h, b.bottom);
-    if (bottom - top < MIN_H + FOLLOW_INSET) return null;
-    return { x: i.left, y: top, w: i.width, h: bottom - top };
+    return { x: i.left, y: Math.max(0, b.top) };
   }
 
-  // Geometry that sits over the sidebar leaving FOLLOW_INSET px of it showing above and to
-  // the left; right and bottom edges line up with the sidebar's. Null when there is no
-  // usable sidebar, in which case callers keep whatever geometry they already have.
+  // Geometry whose top and left edges sit FOLLOW_INSET px inside the sidebar's, so that much
+  // of the sidebar stays visible above and beside the panel, while the right and bottom
+  // edges stay docked to the viewport exactly like the bottom-right default. Null when there
+  // is no usable sidebar (or no room), in which case callers keep what they already have.
   function followGeometry() {
-    const s = sidebarRect();
+    const s = sidebarOrigin();
     if (!s) return null;
-    return clampGeometry({ x: s.x + FOLLOW_INSET, y: s.y + FOLLOW_INSET, w: s.w - FOLLOW_INSET, h: s.h - FOLLOW_INSET });
+    const vp = viewport();
+    const x = s.x + FOLLOW_INSET, y = s.y + FOLLOW_INSET;
+    if (vp.w - x < MIN_W || vp.h - y < MIN_H) return null;
+    return clampGeometry({ x, y, w: vp.w - x, h: vp.h - y });
   }
 
   // ---------------------------------------------------------------------------
