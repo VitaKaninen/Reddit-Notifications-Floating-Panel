@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.6.0
+// @version      6.7.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -81,9 +81,8 @@
 
   const KEY_GEOMETRY = 'rnfp.geometry';
   const KEY_SETTINGS = 'rnfp.settings';
-  const SS_OPEN      = 'rnfp.open';
+  const KEY_PAGES    = 'rnfp.pages';
   const SS_MINIMIZED = 'rnfp.minimized';
-  const SS_DISMISSED = 'rnfp.dismissed';
 
   const DEFAULT_SETTINGS = {
     refreshMs: 120000,
@@ -92,9 +91,19 @@
     markReadOnOpen: true,
     titleCount: true,
     titleFlash: true,
-    autoOpenSub: true,
-    autoOpenAll: false,
+    // 'never' | 'listings' | 'all' — what an untouched page does on arrival.
+    startOpen: 'listings',
+    // Manual opens/closes are recorded per page and override startOpen.
+    rememberPages: true,
   };
+  const START_OPEN_VALUES = ['never', 'listings', 'all'];
+
+  // Per-page memory. Entries are created ONLY by a manual open/close, never by merely
+  // visiting, so the budget is not spent on pages the panel was never touched on.
+  // A year of inactivity is the real eviction rule; the count is a backstop that a normal
+  // user will never reach (see CLAUDE.md for the sizing).
+  const PAGE_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+  const PAGE_MAX    = 5000;
 
   // Tab title indicator: how many times the title blinks when the unread count goes up.
   const FLASH_CYCLES = 2;
@@ -176,6 +185,77 @@
 
   const settings = loadJSON(KEY_SETTINGS, DEFAULT_SETTINGS);
   function saveSettings() { saveJSON(KEY_SETTINGS, settings); }
+
+  // v6.6 stored the same choice as two booleans. Fold them into startOpen once, then drop
+  // them, so a save written by 6.6 keeps behaving the way its owner set it up.
+  if (typeof settings.autoOpenSub === 'boolean') {
+    settings.startOpen = !settings.autoOpenSub ? 'never' : (settings.autoOpenAll ? 'all' : 'listings');
+    delete settings.autoOpenSub;
+    delete settings.autoOpenAll;
+    saveSettings();
+  }
+  if (!START_OPEN_VALUES.includes(settings.startOpen)) settings.startOpen = DEFAULT_SETTINGS.startOpen;
+
+  // ---------------------------------------------------------------------------
+  // Per-page memory
+  //
+  // One GM value holding { "<path>": { o: 1|0, t: <ms of last visit> } }. Read once at
+  // boot, swept, and written back only when something actually changes — a recency bump
+  // alone is flushed lazily on pagehide, because bumps happen on every navigation and the
+  // whole map is rewritten as a single value.
+  // ---------------------------------------------------------------------------
+  let pages = {};
+  let pagesDirty = false;
+
+  // What counts as "a page": the pathname, lowercased, without a trailing slash, and with
+  // the query and hash dropped — so /r/pics, /r/pics/, /r/pics/?f=x and /r/pics#foo are one
+  // page, and old.reddit shares its state with www.
+  function pageKey(path) {
+    let p = (path === undefined ? location.pathname : path).toLowerCase();
+    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    return p || '/';
+  }
+
+  function loadPages() {
+    const raw = loadJSON(KEY_PAGES, {});
+    const cutoff = Date.now() - PAGE_TTL_MS;
+    const kept = Object.entries(raw)
+      .filter(([, v]) => v && typeof v.t === 'number' && v.t >= cutoff)
+      .sort((a, b) => b[1].t - a[1].t)   // newest first, so slice() drops the stalest
+      .slice(0, PAGE_MAX);
+    if (kept.length !== Object.keys(raw).length) pagesDirty = true;
+    pages = Object.fromEntries(kept);
+  }
+
+  function savePages() { if (pagesDirty) { saveJSON(KEY_PAGES, pages); pagesDirty = false; } }
+
+  // The remembered state for this page, or null if it has never been set here.
+  function pageState(key) {
+    const e = pages[key === undefined ? pageKey() : key];
+    return e ? !!e.o : null;
+  }
+
+  // Record a manual open/close. Written through immediately — this is the user making a
+  // decision, and losing it to a crashed tab would be the one failure they would notice.
+  function setPageState(open) {
+    pages[pageKey()] = { o: open ? 1 : 0, t: Date.now() };
+    pagesDirty = true;
+    if (Object.keys(pages).length > PAGE_MAX) loadPages();
+    savePages();
+  }
+
+  // Revisiting a remembered page moves it back to the top, so only pages left alone for a
+  // year fall off. Pages with no entry are deliberately not created here.
+  function touchPage() {
+    const k = pageKey();
+    if (!pages[k]) return;
+    pages[k].t = Date.now();
+    pagesDirty = true;
+  }
+
+  loadPages();
+  window.addEventListener('pagehide', savePages);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) savePages(); });
 
   // ---------------------------------------------------------------------------
   // Viewport geometry. clientWidth/clientHeight exclude the scrollbars, which is
@@ -768,8 +848,11 @@
     }
     #${PANEL_ID} .rnfp-menu-item:hover { background: var(--bg3); }
     #${PANEL_ID} .rnfp-menu-item.selected { color: var(--accent); font-weight: 600; }
-    #${PANEL_ID} .rnfp-menu-item input[type=checkbox] { margin: 0; accent-color: var(--check); }
+    #${PANEL_ID} .rnfp-menu-item input[type=checkbox],
+    #${PANEL_ID} .rnfp-menu-item input[type=radio] { margin: 0; accent-color: var(--check); }
     #${PANEL_ID} .rnfp-menu-item.nested { padding-left: 26px; }
+    /* Heading for the startOpen radio group: a label, not a target — the rows below it are. */
+    #${PANEL_ID} .rnfp-menu-head { padding: 6px 12px 2px; color: var(--muted); white-space: nowrap; cursor: default; }
     #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
     #${PANEL_ID} .rnfp-menu-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
     #${PANEL_ID} .rnfp-menu-row input[type=number] {
@@ -930,7 +1013,7 @@
     ui.intervalBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Auto-refresh interval', 'aria-label': 'Auto-refresh interval', onclick: toggleIntervalMenu }, ICON.chevron());
     ui.settingsBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Settings', 'aria-label': 'Settings', onclick: toggleSettingsMenu }, ICON.gear());
     ui.minBtn      = el('button', { class: 'rnfp-btn', type: 'button', title: 'Minimize', 'aria-label': 'Minimize', onclick: toggleMinimized }, ICON.minimize());
-    ui.closeBtn    = el('button', { class: 'rnfp-btn rnfp-close', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closePanel }, ICON.close());
+    ui.closeBtn    = el('button', { class: 'rnfp-btn rnfp-close', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closePanelByUser }, ICON.close());
 
     ui.header = el('div', { class: 'rnfp-header' },
       ui.title,
@@ -998,8 +1081,6 @@
     document.body.appendChild(panel);
     applyTheme(panel);
     layoutPanel();
-    sessionStorage.setItem(SS_OPEN, '1');
-    sessionStorage.removeItem(SS_DISMISSED);
     scheduleAnchorRetries();
 
     renderList();
@@ -1018,23 +1099,42 @@
     closeMenus();
     if (panel) panel.remove();
     panel = null;
-    sessionStorage.removeItem(SS_OPEN);
-    // Closing the panel is a decision about this tab, not just this page load. Without
-    // this, auto-open would put it straight back on the next reload/navigation and there
-    // would be no way to dismiss it short of turning the setting off.
-    sessionStorage.setItem(SS_DISMISSED, '1');
   }
 
-  // Auto-open on load. `autoOpenAll` is nested under `autoOpenSub` in the menu and, like
-  // the other nested pairs here, only applies while its parent is on.
-  const SUBREDDIT_PATH = /^\/r\/[^/]+/;
-  function shouldAutoOpen() {
-    if (!settings.autoOpenSub) return false;
-    if (settings.autoOpenAll) return true;
-    return SUBREDDIT_PATH.test(location.pathname);
+  // Opening and closing by hand are the only things that write per-page memory. Every
+  // other caller (the boot/navigation rule below) goes to openPanel/closePanel directly,
+  // so applying the rule never rewrites what the user decided.
+  function openPanelByUser()  { openPanel();  if (settings.rememberPages) setPageState(true); }
+  function closePanelByUser() { closePanel(); if (settings.rememberPages) setPageState(false); }
+  function togglePanel() { if (isOpen()) closePanelByUser(); else openPanelByUser(); }
+
+  // A subreddit's post list: /r/<sub> and its sort tabs, and nothing deeper. Spelling the
+  // sorts out rather than excluding /comments/ keeps /wiki/, /about/, /submit and whatever
+  // Reddit adds next on the closed side by default.
+  const LISTING_PATH = /^\/r\/[^/]+(\/(hot|new|top|rising|controversial|best|gilded))?$/;
+
+  // What this page should do on arrival: true = open, false = close, null = leave alone.
+  //
+  // A remembered page answers both ways, because closing it somewhere is as explicit an
+  // instruction as opening it. The startOpen rule only ever answers `true`: it decides
+  // where the panel appears by itself, and pulling an open panel out from under someone
+  // mid-read is not something any of its wordings promise.
+  function arrivalState() {
+    if (settings.rememberPages) {
+      const remembered = pageState();
+      if (remembered !== null) return remembered;
+    }
+    if (settings.startOpen === 'all') return true;
+    if (settings.startOpen === 'listings' && LISTING_PATH.test(pageKey())) return true;
+    return null;
   }
 
-  function togglePanel() { if (isOpen()) closePanel(); else openPanel(); }
+  function applyArrivalState() {
+    touchPage();
+    const want = arrivalState();
+    if (want === true && !isOpen()) openPanel();
+    else if (want === false && isOpen()) closePanel();
+  }
 
   // Reset restores the standard offsets: FOLLOW_INSET inside the sidebar's top-left corner,
   // right and bottom flush with the window. Without a sidebar it falls back to the
@@ -1069,7 +1169,7 @@
   // Keep the panel attached across Reddit's SPA navigations (the document survives,
   // but be defensive in case body children get replaced).
   function ensureAttached() {
-    if (panel && !panel.isConnected && sessionStorage.getItem(SS_OPEN) === '1') {
+    if (panel && !panel.isConnected) {
       document.body.appendChild(panel);
       layoutPanel();
     }
@@ -1078,8 +1178,15 @@
   // and again shortly. Only the left edge can move as a result: the panel's vertical position
   // is measured from the window, so navigating between pages whose sidebars start at
   // different heights (home under the header, a subreddit under its banner) does not shift it.
+  //
+  // Reddit's SPA navigations do not re-run the script, so this is the only place the
+  // arrival rule gets applied after the first load. Without it every wording in the
+  // settings would be a lie the moment you clicked a link instead of typing a URL.
+  let lastPath = pageKey();
   function onNavigated() {
     ensureAttached();
+    const now = pageKey();
+    if (now !== lastPath) { lastPath = now; applyArrivalState(); }
     if (!isOpen()) return;
     applyAnchor(true);
     scheduleAnchorRetries();
@@ -1286,43 +1393,82 @@
   function buildSettingsMenu() {
     const menu = ui.settingsMenu;
     menu.textContent = '';
-    function checkRow(label, key, nested, onChange) {
+    function checkRow(label, key, nested, tip, onChange) {
       const cb = el('input', { type: 'checkbox', id: 'rnfp-set-' + key });
       cb.checked = !!settings[key];
       cb.addEventListener('change', () => { settings[key] = cb.checked; saveSettings(); if (onChange) onChange(); });
-      const row = el('label', { class: 'rnfp-menu-item' + (nested ? ' nested' : ''), for: cb.id }, el('span', { text: label }), cb);
+      const row = el('label', { class: 'rnfp-menu-item' + (nested ? ' nested' : ''), for: cb.id, title: tip },
+        el('span', { text: label }), cb);
       return { row, cb };
     }
-    const switchRow = checkRow('Switch to the new tab', 'switchTab', true);
-    const newTabRow = checkRow('Open links in a new tab', 'newTab', false, () => switchRow.row.classList.toggle('disabled', !settings.newTab));
+    // One radio of the startOpen group. Same shape as checkRow so the rows line up.
+    function radioRow(label, value, tip, onChange) {
+      const rb = el('input', { type: 'radio', name: 'rnfp-startopen', id: 'rnfp-set-startOpen-' + value });
+      rb.checked = settings.startOpen === value;
+      rb.addEventListener('change', () => {
+        if (!rb.checked) return;
+        settings.startOpen = value; saveSettings(); if (onChange) onChange();
+      });
+      const row = el('label', { class: 'rnfp-menu-item nested', for: rb.id, title: tip },
+        el('span', { text: label }), rb);
+      return { row, rb };
+    }
+    const switchRow = checkRow('Switch to the new tab', 'switchTab', true,
+      'Bring the new tab to the front instead of opening it in the background.');
+    const newTabRow = checkRow('Open links in a new tab', 'newTab', false,
+      'Clicking a notification opens it in a new tab, leaving the page you are on alone. ' +
+      'Off, it navigates the current tab.',
+      () => switchRow.row.classList.toggle('disabled', !settings.newTab));
     switchRow.row.classList.toggle('disabled', !settings.newTab);
-    const markRow = checkRow('Mark read when opened', 'markReadOnOpen', false);
-    const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true);
-    const countRow = checkRow('Show the count in the tab title', 'titleCount', false, () => {
-      flashRow.row.classList.toggle('disabled', !settings.titleCount);
-      refreshTitle();
-    });
+    const markRow = checkRow('Mark read when opened', 'markReadOnOpen', false,
+      'Opening a notification marks it read on Reddit, the same as clicking it on the inbox page.');
+    const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true,
+      'When the count goes up, blink the tab title twice so it catches your eye in a ' +
+      'background tab. The count alone is easy to miss.');
+    const countRow = checkRow('Show the count in the tab title', 'titleCount', false,
+      'Put the unread count at the front of the tab title, like (3) reddit. ' +
+      'Only while the panel is open — that is when the script is polling.',
+      () => {
+        flashRow.row.classList.toggle('disabled', !settings.titleCount);
+        refreshTitle();
+      });
     flashRow.row.classList.toggle('disabled', !settings.titleCount);
-    const allRow = checkRow('…and on every Reddit page', 'autoOpenAll', true);
-    const subRow = checkRow('Open automatically on subreddit pages', 'autoOpenSub', false, () => {
-      allRow.row.classList.toggle('disabled', !settings.autoOpenSub);
-      // Turning it back on is a fresh intent, so forget that the panel was dismissed
-      // earlier in this tab — otherwise the setting would look like it did nothing.
-      if (settings.autoOpenSub) sessionStorage.removeItem(SS_DISMISSED);
-    });
-    allRow.row.classList.toggle('disabled', !settings.autoOpenSub);
+
+    const startHead = el('div', { class: 'rnfp-menu-head', text: 'Start with the panel open…',
+      title: 'What the panel does when you arrive on a Reddit page — a page load, or clicking ' +
+             'through to another page. It only ever opens the panel; it will not close one you ' +
+             'are reading.' });
+    const neverRow = radioRow('Never', 'never',
+      'The panel only ever opens when you open it yourself, from the bell menu.');
+    const listRow = radioRow('Only on subreddit pages', 'listings',
+      'A subreddit\'s list of posts — /r/pics and its hot/new/top/rising tabs. ' +
+      'Not individual comment pages, and not your home feed.');
+    const allPagesRow = radioRow('On every Reddit page', 'all',
+      'Every page this script runs on, including your home feed, profiles, search and ' +
+      'individual posts.');
+    const rememberRow = checkRow('Also remember any pages where I open / close it', 'rememberPages', true,
+      'Opening or closing the panel on a page is remembered for that page and overrides the ' +
+      'choice above, in both directions. Kept for a year after your last visit, up to ' +
+      PAGE_MAX.toLocaleString() + ' pages. Off, nothing is recorded and every page follows the ' +
+      'choice above.');
     menu.appendChild(newTabRow.row);
     menu.appendChild(switchRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(markRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
-    menu.appendChild(subRow.row);
-    menu.appendChild(allRow.row);
+    menu.appendChild(startHead);
+    menu.appendChild(neverRow.row);
+    menu.appendChild(listRow.row);
+    menu.appendChild(allPagesRow.row);
+    menu.appendChild(rememberRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(countRow.row);
     menu.appendChild(flashRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
-    menu.appendChild(el('button', { class: 'rnfp-menu-item', type: 'button', role: 'menuitem', text: 'Reset panel position & size', onclick: () => { closeMenus(); resetPanel(); } }));
+    menu.appendChild(el('button', { class: 'rnfp-menu-item', type: 'button', role: 'menuitem',
+      title: 'Put the panel back in its default place: tucked inside the right sidebar, flush ' +
+             'with the bottom-right of the window.',
+      text: 'Reset panel position & size', onclick: () => { closeMenus(); resetPanel(); } }));
   }
 
   // ---------------------------------------------------------------------------
@@ -1663,11 +1809,6 @@
   // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
-  // The panel was open in this tab before the reload, or the page qualifies for auto-open
-  // and the panel has not been closed by hand since the tab was opened.
-  if (sessionStorage.getItem(SS_OPEN) === '1' ||
-      (shouldAutoOpen() && sessionStorage.getItem(SS_DISMISSED) !== '1')) {
-    if (document.body) openPanel();
-    else document.addEventListener('DOMContentLoaded', openPanel, { once: true });
-  }
+  if (document.body) applyArrivalState();
+  else document.addEventListener('DOMContentLoaded', applyArrivalState, { once: true });
 })();

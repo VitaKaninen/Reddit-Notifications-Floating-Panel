@@ -214,22 +214,76 @@ hover; repointing it would turn all of those blue too, which is why the checkbox
 variable. `#89b4fa` is the Catppuccin Mocha blue that Forget-Me-Not, Sudokupad Tools and
 Forum-Stumbler all use for their checkboxes — see the parent folder's `CLAUDE.md`.
 
-## Auto-open on load (v6.6.0)
+## Start-open rules and per-page memory (v6.7.0, replaces v6.6.0's two booleans)
 
-Two nested settings, matching the new-tab and tab-title pairs:
+The four behaviours the user asked for are **two independent questions**, which is why the menu
+is a radio group plus one checkbox rather than a list of toggles:
 
-| Setting | Default | Meaning |
+| Setting | Values | Default |
 |---|---|---|
-| `autoOpenSub` | **on** | open the panel on load when `location.pathname` matches `/^\/r\/[^/]+/` (covers subreddit listings *and* post pages inside a subreddit) |
-| `autoOpenAll` | off | nested under it — open on every Reddit page instead. Greyed out while `autoOpenSub` is off, and ignored then too |
+| `startOpen` | `'never'` / `'listings'` / `'all'` — what an *untouched* page does on arrival | `'listings'` |
+| `rememberPages` | manual opens/closes are recorded per page and **override** `startOpen` | on |
 
-- **`rnfp.dismissed` (sessionStorage) is what makes this dismissible.** Closing the panel by hand
-  sets it and auto-open skips the rest of the tab session; `openPanel` clears it, and so does
-  ticking `autoOpenSub` back on (otherwise the setting looks broken — you turn it on and nothing
-  happens because you closed the panel ten minutes ago).
-- Only fires at `@run-at document-idle`, i.e. on real page loads. Reddit's SPA navigations do not
-  re-run the script (see the shared `CLAUDE.md` on the Navigation API), so navigating from home to
-  a subreddit in-place will *not* auto-open the panel — only a hard load of that URL does.
-- Existing installs pick the defaults up for free: `loadJSON` is
-  `Object.assign({}, DEFAULT_SETTINGS, parsed)`, so keys added to `DEFAULT_SETTINGS` land on saves
-  written by older versions.
+Mode 1 (remembers per page) is `never` + remember; mode 4 (always closed) is `never` + no
+remember. The two useful hybrids fall out for free. `v6.6`'s `autoOpenSub`/`autoOpenAll` are
+migrated once at load and deleted.
+
+**`arrivalState()` returns `true` / `false` / `null`, and the `null` is the point.** A remembered
+page answers both ways, because closing the panel somewhere is as explicit an instruction as
+opening it. The `startOpen` rule only ever answers `true` — it decides where the panel appears by
+itself and never force-closes one you are reading, which is also what "Start with the panel
+open…" promises. So the rule opens, memory opens *and* closes, and anything else leaves the panel
+alone.
+
+**Only `openPanelByUser`/`closePanelByUser` write memory.** The close button and the bell menu go
+through those; `applyArrivalState` calls bare `openPanel`/`closePanel`, so applying the rule can
+never overwrite what the user decided. Getting this backwards makes every auto-open permanently
+"remembered" on first sight.
+
+## The SPA watcher is what makes any of it true (v6.7.0)
+
+Reddit does not re-run the script on in-page navigation, so `onNavigated` (already present for
+the sidebar anchor) now also calls `applyArrivalState` when `pageKey()` actually changes. Without
+it every wording in the settings is a lie the moment you click a link instead of typing a URL —
+mode 4's panel would persist through clicks, mode 2 would not open on a listing you clicked to,
+and per-page memory would never fire at all. The `lastPath` guard matters: `navigatesuccess` also
+fires for same-page state pushes.
+
+## Per-page memory storage (v6.7.0)
+
+One GM value, `rnfp.pages`, holding `{ "<path>": { o: 1|0, t: <ms of last visit> } }`.
+
+- **A page is the lowercased `pathname`, no trailing slash, query and hash dropped.** So
+  `/r/pics`, `/r/pics/`, `/r/pics/?f=x` and `/r/pics#foo` are one page, and old.reddit shares
+  state with www.
+- **Entries are created only by a manual open/close, never by visiting.** This is what keeps the
+  budget meaningful — otherwise the slots fill with pages the panel was never touched on.
+  `touchPage()` bumps an *existing* entry's recency and creates nothing.
+- **Eviction is a year of inactivity; the 5,000 cap is a backstop.** Because entries need a
+  deliberate open/close, a heavy user creates a handful a week, so a year lands in the hundreds
+  and the cap never binds. Measured: 5,000 entries with long comment-page paths is 477 KB of
+  JSON, which is fine to hold but is rewritten whole on every save — hence the next point.
+- **Recency bumps are flushed lazily** (`pagehide` + `visibilitychange`), because they happen on
+  every navigation. A manual open/close writes through immediately: that is the user making a
+  decision, and losing it to a killed tab is the one failure they would notice.
+
+## Settings menu: tooltips on every row (v6.7.0)
+
+Every row carries a `title` explaining what it does, including the "Reset panel position & size"
+button and the radio group's heading. `checkRow(label, key, nested, tip, onChange)` — note `tip`
+sits **before** `onChange`; the v6.6 signature had four arguments and callers passed the callback
+fourth.
+
+## `rnfp.open` and `rnfp.dismissed` are gone (v6.7.0)
+
+`rnfp.open` (sessionStorage) used to reopen the panel on any reload *regardless of every
+setting*, which directly contradicted "always starts closed" — F5 brought it back. Per-page
+memory replaces it properly and durably. `ensureAttached` no longer consults it (`panel &&
+!panel.isConnected` is the whole condition; `closePanel` nulls `panel`). `rnfp.dismissed` was
+a v6.6 stopgap for tab-wide dismissal and is redundant now that closing writes a per-page record.
+**`rnfp.minimized` stays per-tab** — minimized is a third axis and folding it into the page
+record doubles the states to reason about.
+
+Consequence worth knowing: with `rememberPages` off, manually opening the panel on a page that
+`startOpen` does not cover no longer survives a reload. That is the honest reading of the
+setting, and the checkbox is the fix.
