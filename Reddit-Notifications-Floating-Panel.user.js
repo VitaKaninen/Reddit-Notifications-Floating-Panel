@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.9.0
+// @version      6.10.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -69,6 +69,17 @@
   const SIDEBAR = IS_OLD_REDDIT
     ? { box: '.side', inner: '.side' }
     : { box: '#right-sidebar-container', inner: '#right-sidebar-contents' };
+
+  // Crib sheet shown under the custom-interval box. Seconds stop being readable somewhere
+  // around "how long is 21600", which is exactly when someone wants a multi-hour interval.
+  const LONG_INTERVALS = [
+    ['30 min', 1800],
+    ['1 hour', 3600],
+    ['2 hours', 7200],
+    ['6 hours', 21600],
+    ['12 hours', 43200],
+    ['24 hours', 86400],
+  ];
 
   const REFRESH_OPTIONS = [
     { label: '30 sec', ms: 30000 },
@@ -556,9 +567,8 @@
       --border:    #343536;
       --text:      #d7dadc;
       --muted:     #8a8d91;
-      --accent:    #ff4500;
-      --check:     #89b4fa;   /* shared checkbox blue across these userscripts — deliberately NOT --accent */
-      --badge:     #d93900;   /* Reddit's --color-brand-background, sampled from its inbox badge */
+      --check:     #89b4fa;   /* every accent in the panel: checks, radios, selected rows, spinner */
+      --badge:     #d93900;   /* Reddit's --color-brand-background. THE ONLY ORANGE — unread count only */
       --danger:    #c0392b;
       --shadow:    0 8px 24px rgba(0,0,0,.6);
       /* Native checkboxes and radios take their unchecked look from the color-scheme in
@@ -781,9 +791,9 @@
       display: inline-block;
       margin-top: 10px;
       padding: 5px 14px;
-      background: var(--accent);
-      color: #fff;
-      border: none;
+      background: var(--bg3);
+      color: var(--text);
+      border: 1px solid var(--border);
       border-radius: 5px;
       cursor: pointer;
     }
@@ -791,7 +801,7 @@
       width: 26px; height: 26px;
       margin: 0 auto 10px;
       border: 3px solid var(--bg3);
-      border-top-color: var(--accent);
+      border-top-color: var(--check);
       border-radius: 50%;
       animation: rnfp-spin .7s linear infinite;
     }
@@ -853,7 +863,7 @@
       white-space: nowrap;
     }
     #${PANEL_ID} .rnfp-menu-item:hover { background: var(--bg3); }
-    #${PANEL_ID} .rnfp-menu-item.selected { color: var(--accent); font-weight: 600; }
+    #${PANEL_ID} .rnfp-menu-item.selected { color: var(--check); font-weight: 600; }
     #${PANEL_ID} .rnfp-menu-item input[type=checkbox],
     #${PANEL_ID} .rnfp-menu-item input[type=radio] { margin: 0; accent-color: var(--check); }
     #${PANEL_ID} .rnfp-menu-item.nested { padding-left: 26px; }
@@ -900,9 +910,9 @@
     }
     #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
     #${PANEL_ID} .rnfp-custom input {
-      width: 52px;
+      width: 62px;
       padding: 2px 5px;
-      text-align: right;
+      text-align: center;
       background: var(--bg);
       color: var(--muted);
       border: 1px solid var(--border);
@@ -919,6 +929,39 @@
     #${PANEL_ID} .rnfp-custom.active input,
     #${PANEL_ID} .rnfp-custom.active .rnfp-secs { color: var(--text); }
     #${PANEL_ID} .rnfp-custom.invalid input { border-color: var(--danger); color: var(--text); }
+
+    /* Long-interval crib sheet, revealed while the custom box has focus. */
+    #${PANEL_ID} .rnfp-reflist { display: none; padding: 2px 0 4px; }
+    #${PANEL_ID} .rnfp-reflist.open { display: block; }
+    #${PANEL_ID} .rnfp-ref {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      width: 100%;
+      padding: 3px 12px 3px 26px;
+      background: none;
+      border: none;
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    #${PANEL_ID} .rnfp-ref:hover { background: var(--bg3); color: var(--text); }
+    #${PANEL_ID} .rnfp-ref .rnfp-ref-secs { font-variant-numeric: tabular-nums; }
+
+    /* Title bar of a movable menu. */
+    #${PANEL_ID} .rnfp-menu-bar {
+      padding: 5px 12px 6px;
+      margin-bottom: 3px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: move;
+      user-select: none;
+      touch-action: none;
+    }
     #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
     #${PANEL_ID} .rnfp-menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
 
@@ -955,8 +998,8 @@
       white-space: nowrap;
     }
     #${CTX_ID} li svg { color: var(--muted); flex: 0 0 auto; }
-    #${CTX_ID} li:hover { background: var(--bg2); color: var(--accent); }
-    #${CTX_ID} li:hover svg { color: var(--accent); }
+    #${CTX_ID} li:hover { background: var(--bg2); color: var(--check); }
+    #${CTX_ID} li:hover svg { color: var(--check); }
     #${CTX_ID} li.disabled { opacity: .45; pointer-events: none; }
   `;
 
@@ -1391,30 +1434,72 @@
   }
 
   // `centerOn`, when given, centres the menu horizontally on that element instead of
-  // right-aligning it to the anchor. The settings menu is wider than the panel, so hanging
-  // it off the gear put the whole overhang on one side; centred, it sits evenly over the
-  // panel it belongs to. Vertical placement is unchanged — below the anchor, flipped above
-  // it when there is no room, then clamped.
+  // right-aligning it to the anchor.
+  //
+  // When the target is at least as wide as the menu's natural width the menu is given that
+  // exact width and simply placed at its left edge. Centring by arithmetic instead used to
+  // leave the menu a few pixels off: a `min-width` floor and a `getBoundingClientRect()`
+  // measurement disagree about sub-pixel widths and about the border, and half of that
+  // difference is a visible offset. Setting the width outright removes the arithmetic.
   function positionMenu(menu, anchor, centerOn) {
     const r = anchor.getBoundingClientRect();
     const vp = viewport();
     menu.style.left = '0px';
     menu.style.top  = '0px';
-    const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    let left;
+    menu.style.width = '';
+    const natural = menu.offsetWidth;
+    let left, mw = natural;
     if (centerOn) {
       const c = centerOn.getBoundingClientRect();
-      left = c.left + (c.width - mw) / 2;
+      const target = Math.round(c.width);
+      if (target >= natural) { menu.style.width = target + 'px'; mw = target; left = c.left; }
+      else { left = c.left + (c.width - natural) / 2; }
     } else {
-      left = r.right - mw;
+      left = r.right - natural;
     }
-    let top  = r.bottom + 4;
+    const mh = menu.offsetHeight;
+    let top = r.bottom + 4;
     if (left < 4) left = 4;
     if (left + mw > vp.w - 4) left = vp.w - mw - 4;
     if (top + mh > vp.h - 4) top = r.top - mh - 4;
     if (top < 4) top = 4;
     menu.style.left = Math.round(left) + 'px';
     menu.style.top  = Math.round(top) + 'px';
+  }
+
+  // Keep a menu on screen after its own content has grown (the interval reference list
+  // expanding). Only the vertical edge is touched, so a menu the user has dragged keeps the
+  // horizontal position they put it at.
+  function clampMenuIntoView(menu) {
+    const vp = viewport();
+    const r = menu.getBoundingClientRect();
+    if (r.bottom <= vp.h - 4) return;
+    menu.style.top = Math.round(Math.max(4, vp.h - 4 - r.height)) + 'px';
+  }
+
+  // Drag a menu by its title bar. Deliberately not persisted: the position resets to the
+  // anchor every time the menu is reopened, so a menu dragged somewhere odd is never a
+  // state the user has to undo.
+  function makeMenuDraggable(menu, handle) {
+    handle.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const r = menu.getBoundingClientRect();
+      const dx = e.clientX - r.left, dy = e.clientY - r.top;
+      const vp = viewport();
+      const onMove = ev => {
+        menu.style.left = Math.round(Math.max(4, Math.min(ev.clientX - dx, vp.w - r.width - 4))) + 'px';
+        menu.style.top  = Math.round(Math.max(4, Math.min(ev.clientY - dy, vp.h - r.height - 4))) + 'px';
+      };
+      const onUp = () => {
+        handle.releasePointerCapture(e.pointerId);
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+      };
+      handle.setPointerCapture(e.pointerId);
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+    });
   }
 
   function closeMenus() {
@@ -1436,7 +1521,7 @@
     if (!opening) return;
     buildIntervalMenu();
     ui.intervalMenu.classList.add('open');
-    positionMenu(ui.intervalMenu, ui.intervalBtn);
+    positionMenu(ui.intervalMenu, ui.intervalBtn, panel);
   }
 
   function setRefresh(ms) {
@@ -1486,16 +1571,47 @@
       return true;
     };
     input.addEventListener('input', () => row.classList.remove('invalid'));
-    input.addEventListener('focus', () => input.select());
     input.addEventListener('keydown', ev => {
       ev.stopPropagation();               // Escape belongs to the input first, not the panel
       if (ev.key === 'Enter') { if (apply()) closeMenus(); }
       else if (ev.key === 'Escape') { buildIntervalMenu(); }
     });
+    menu.appendChild(row);
+
+    // Seconds get unreadable past a few minutes, so focusing the box drops down a crib
+    // sheet of the long intervals. The rows are clickable as well as readable — mousedown
+    // is prevented so the input never loses focus and the list never closes underneath the
+    // click that is trying to use it.
+    const refs = el('div', { class: 'rnfp-reflist' });
+    for (const [label, secs] of LONG_INTERVALS) {
+      refs.appendChild(el('button', {
+        class: 'rnfp-ref', type: 'button', title: 'Set the interval to ' + label + '.',
+        onclick: () => { input.value = String(secs); if (apply()) { refreshCustomRow(); input.focus(); } },
+      }, el('span', { text: label }), el('span', { class: 'rnfp-ref-secs', text: String(secs) })));
+    }
+    refs.addEventListener('mousedown', ev => ev.preventDefault());
+    menu.appendChild(refs);
+
+    // Keep the row's muted/active look honest after a reference click, without rebuilding
+    // the menu (which would drop focus and collapse the list).
+    function refreshCustomRow() {
+      const nowPreset = REFRESH_OPTIONS.some(o => o.ms === settings.refreshMs);
+      row.classList.toggle('active', !nowPreset);
+      for (const b of menu.querySelectorAll('.rnfp-menu-item')) {
+        b.classList.toggle('selected', b.textContent === refreshLabel(settings.refreshMs));
+      }
+    }
+    input.addEventListener('focus', () => {
+      input.select();
+      refs.classList.add('open');
+      clampMenuIntoView(menu);
+    });
     // Committing on blur as well as Enter, so clicking away from a typed number keeps it
     // rather than silently discarding it.
-    input.addEventListener('blur', () => { if (input.value !== '') apply(); });
-    menu.appendChild(row);
+    input.addEventListener('blur', () => {
+      refs.classList.remove('open');
+      if (input.value !== '') apply();
+    });
   }
 
   function toggleSettingsMenu(e) {
@@ -1505,17 +1621,18 @@
     if (!opening) return;
     buildSettingsMenu();
     ui.settingsMenu.classList.add('open');
-    // Never narrower than the panel it belongs to: a menu floating inside a much wider
-    // panel reads as a stray box rather than that panel's own settings. Re-measured on
-    // every open because the panel is resizable. It may still be WIDER than the panel —
-    // the rows are nowrap and a label is not going to be truncated to fit.
-    ui.settingsMenu.style.minWidth = panel.offsetWidth + 'px';
+    // Width and placement both come from positionMenu now: it stretches the menu to the
+    // panel's exact width whenever the panel is the wider of the two.
     positionMenu(ui.settingsMenu, ui.settingsBtn, panel);
   }
 
   function buildSettingsMenu() {
     const menu = ui.settingsMenu;
     menu.textContent = '';
+    const bar = el('div', { class: 'rnfp-menu-bar', text: 'Settings',
+      title: 'Drag to move this window. It goes back under the gear next time you open it.' });
+    makeMenuDraggable(menu, bar);
+    menu.appendChild(bar);
     function checkRow(label, key, nested, tip, onChange) {
       const cb = el('input', { type: 'checkbox', id: 'rnfp-set-' + key });
       cb.checked = !!settings[key];
@@ -1547,9 +1664,9 @@
     const markRow = checkRow('Mark comments as read when opened', 'markReadOnOpen', false,
       'Opening a notification marks it read on Reddit, the same as clicking it on the inbox page.');
     const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true,
-      'When the count goes up, blink the tab title twice so it catches your eye in a ' +
-      'background tab. The count alone is easy to miss.');
-    const countRow = checkRow('Show the count in the tab title', 'titleCount', false,
+      'When the count goes up, blink the tab twice — the title reads "New Comment!" and the ' +
+      'favicon swaps to a red count badge, then both settle back. The count alone is easy to miss.');
+    const countRow = checkRow('Show the unread count in the tab title', 'titleCount', false,
       'Put the unread count at the front of the tab title, like (3) reddit. ' +
       'Only while the panel is open — that is when the script is polling.',
       () => {
@@ -1768,21 +1885,67 @@
   }
 
   function alertTitle() {
-    return titleCount > 1 ? titleCount + ' new notifications' : 'New notification';
+    return titleCount > 1 ? titleCount + ' New Comments!' : 'New Comment!';
   }
+
+  // ---------------------------------------------------------------------------
+  // Favicon flashing
+  //
+  // A page cannot colour its own tab — there is no API for browser chrome, and
+  // <meta name="theme-color"> only reaches mobile UI. The favicon is the one pixel of the
+  // tab a page owns, and swapping it is how Discord and Slack do the half of their "flash"
+  // that is not the title. So the flash alternates a generated badge icon with the page's
+  // real one.
+  //
+  // The icon is built as an SVG data URI rather than a canvas: drawing Reddit's own favicon
+  // (served from redditstatic.com) into a canvas would taint it and toDataURL would throw.
+  // Note `%23` for the colour — a literal `#` in a data URI starts the fragment and
+  // truncates the image.
+  // ---------------------------------------------------------------------------
+  let savedIcons = null;   // the page's own <link rel=icon>s, detached while ours is up
+  let ourIcon    = null;
+
+  function flashIconHref() {
+    const n = titleCount > 99 ? '99+' : String(titleCount);
+    const size = n.length > 2 ? 13 : n.length > 1 ? 17 : 20;
+    return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+      + "%3Ccircle cx='16' cy='16' r='16' fill='%23d93900'/%3E"
+      + "%3Ctext x='16' y='16' fill='white' font-family='Arial,Helvetica,sans-serif'"
+      + " font-size='" + size + "' font-weight='bold' text-anchor='middle'"
+      + " dominant-baseline='central'%3E" + n + "%3C/text%3E%3C/svg%3E";
+  }
+
+  function setFlashIcon(on) {
+    if (!document.head) return;
+    if (on) {
+      if (ourIcon) return;
+      savedIcons = Array.from(document.head.querySelectorAll('link[rel~="icon"]'));
+      for (const l of savedIcons) l.remove();
+      ourIcon = el('link', { rel: 'icon', type: 'image/svg+xml', href: flashIconHref() });
+      document.head.appendChild(ourIcon);
+    } else {
+      if (ourIcon) { ourIcon.remove(); ourIcon = null; }
+      if (savedIcons) { for (const l of savedIcons) document.head.appendChild(l); savedIcons = null; }
+    }
+  }
+  // Never leave Reddit wearing our favicon if the tab goes away mid-flash.
+  window.addEventListener('pagehide', () => setFlashIcon(false));
 
   function stopTitleFlash() {
     if (titleFlashTimer) { clearTimeout(titleFlashTimer); titleFlashTimer = null; }
+    setFlashIcon(false);
   }
 
   // Blink the whole title, so the change is visible in the few characters a tab actually
-  // shows, then settle on the "(n) " badge.
+  // shows, then settle on the "(n) " badge. The favicon blinks in step with it.
   function startTitleFlash() {
     stopTitleFlash();
     let step = 0;
     const tick = () => {
-      if (step >= FLASH_CYCLES * 2) { titleFlashTimer = null; writeTitle(badgedTitle()); return; }
-      writeTitle(step % 2 === 0 ? alertTitle() : badgedTitle());
+      if (step >= FLASH_CYCLES * 2) { titleFlashTimer = null; setFlashIcon(false); writeTitle(badgedTitle()); return; }
+      const alert = step % 2 === 0;
+      writeTitle(alert ? alertTitle() : badgedTitle());
+      setFlashIcon(alert);
       step++;
       titleFlashTimer = setTimeout(tick, FLASH_MS);
     };

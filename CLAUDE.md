@@ -361,3 +361,54 @@ the only way. The bell context menu's four entries carry a `tip` field.
 
 **Audit trick:** grep for `title:` misses multi-line `el(...)` calls. Scan for `el('button'` /
 `el('a'` and check the following ~8 lines instead — that is what found the context menu had none.
+
+## Orange is now the unread badge and nothing else (v6.10.0)
+
+`--accent: #ff4500` is **deleted**. Everything that used it moved to `--check` (#89b4fa): the
+selected interval preset, the spinner, the context-menu hover. "Try again" lost its orange fill
+and became the same bordered button as Reset. `--badge: #d93900` is the only orange left, on the
+bell count and on the generated favicon badge.
+
+## Tab flashing: title *and* favicon (v6.10.0)
+
+**A page cannot colour its own browser tab.** There is no API for tab chrome;
+`<meta name="theme-color">` only reaches mobile browser UI. The favicon is the one pixel of the
+tab a page owns, which is how Discord and Slack do the non-title half of their flash — so the
+flash now alternates a generated badge icon with the page's real one.
+
+- Icon is an **SVG data URI**, not a canvas: drawing Reddit's own favicon (redditstatic.com,
+  cross-origin) into a canvas taints it and `toDataURL` throws. `%23d93900`, never a literal `#`
+  — that would start the fragment and truncate the image.
+- Font size steps down at 2 and 3 digits; >99 shows `99+`. Verified legible at 16px.
+- `setFlashIcon(true)` **detaches** the page's own `link[rel~=icon]` elements and appends ours;
+  `false` puts them back. Also wired to `pagehide`, so a tab closed mid-flash never leaves Reddit
+  wearing our icon.
+- The title's `<head>` MutationObserver sees these link changes, but bails on
+  `document.title === titleWritten`, so there is no loop.
+- Alert text is now "New Comment!" / "n New Comments!" (asked for 2026-09-03). Note this is
+  narrower than reality — the inbox also carries post replies, mentions and awards.
+
+## Menu placement (v6.10.0)
+
+- **Both menus centre on the panel.** The interval menu joined the settings menu.
+- **`positionMenu` sets the width outright** when the panel is the wider of the two, then places
+  the menu at the panel's left edge. The v6.9 approach — a `min-width` floor plus
+  `left = c.left + (c.width - mw) / 2` — sat a few pixels left of true: a `min-width` and a
+  `getBoundingClientRect()` disagree about sub-pixel width and about the border, and half that
+  difference is visible. Setting the width removes the arithmetic entirely.
+- **`makeMenuDraggable(menu, handle)`** — the settings menu has a "Settings" title bar you can
+  drag it by. Deliberately **not persisted**: `positionMenu` runs on every open, so a menu
+  dragged somewhere odd is never a state the user has to undo.
+- **`clampMenuIntoView`** only touches `top`, so a menu whose content grows (the interval
+  reference list) stays where the user dragged it horizontally.
+
+## Custom interval: crib sheet on focus (v6.10.0)
+
+Focusing the seconds box drops down `LONG_INTERVALS` — 30 min through 24 hours with their second
+counts — because "how long is 21600" is exactly the question a multi-hour interval raises. Rows
+are clickable as well as readable.
+
+**`mousedown` is `preventDefault`ed on the list**, or the input blurs, the blur handler fires and
+the list closes out from under the click that was trying to use it. Clicking a row calls
+`refreshCustomRow()` rather than rebuilding the menu, because a rebuild drops focus and collapses
+the list. The box is `text-align: center` (was `right`).
