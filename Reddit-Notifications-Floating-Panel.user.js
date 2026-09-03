@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.10.0
+// @version      6.11.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -907,11 +907,18 @@
       gap: 8px;
       padding: 6px 12px;
       white-space: nowrap;
+      cursor: pointer;
     }
+    /* The same hover the preset rows above it get — it is one of the choices, not a caption. */
+    #${PANEL_ID} .rnfp-custom:hover { background: var(--bg3); }
     #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
     #${PANEL_ID} .rnfp-custom input {
       width: 62px;
-      padding: 2px 5px;
+      /* Explicit height + line-height, and no vertical padding. An input's own baseline is
+         what a flex row aligns to otherwise, which sat the box low against the label. */
+      height: 22px;
+      line-height: 20px;
+      padding: 0 5px;
       text-align: center;
       background: var(--bg);
       color: var(--muted);
@@ -952,10 +959,13 @@
 
     /* Title bar of a movable menu. */
     #${PANEL_ID} .rnfp-menu-bar {
-      padding: 5px 12px 6px;
+      padding: 6px 12px 7px;
       margin-bottom: 3px;
       border-bottom: 1px solid var(--border);
       color: var(--text);
+      /* Larger than .rnfp-menu-head, which is a section label inside this window, not its
+         title. Same 14px the panel's own header uses. */
+      font-size: 14px;
       font-weight: 700;
       white-space: nowrap;
       cursor: move;
@@ -1441,7 +1451,15 @@
   // leave the menu a few pixels off: a `min-width` floor and a `getBoundingClientRect()`
   // measurement disagree about sub-pixel widths and about the border, and half of that
   // difference is a visible offset. Setting the width outright removes the arithmetic.
-  function positionMenu(menu, anchor, centerOn) {
+  // `stretch` additionally gives the menu the target's exact width when the target is the
+  // wider of the two, which only the settings menu wants.
+  //
+  // THE CLAMPS HAVE NO INSET, and that is load-bearing. They used to keep the menu 4px
+  // inside the viewport, but the panel docks FLUSH with the window's right and bottom
+  // edges, so a panel-width menu placed at the panel's left edge tripped the right-hand
+  // clamp every single time and was shoved 4px left of the panel it was supposed to line
+  // up with. Any inset here is a permanent misalignment, not a safety margin.
+  function positionMenu(menu, anchor, centerOn, stretch) {
     const r = anchor.getBoundingClientRect();
     const vp = viewport();
     menu.style.left = '0px';
@@ -1452,17 +1470,17 @@
     if (centerOn) {
       const c = centerOn.getBoundingClientRect();
       const target = Math.round(c.width);
-      if (target >= natural) { menu.style.width = target + 'px'; mw = target; left = c.left; }
+      if (stretch && target >= natural) { menu.style.width = target + 'px'; mw = target; left = c.left; }
       else { left = c.left + (c.width - natural) / 2; }
     } else {
       left = r.right - natural;
     }
     const mh = menu.offsetHeight;
     let top = r.bottom + 4;
-    if (left < 4) left = 4;
-    if (left + mw > vp.w - 4) left = vp.w - mw - 4;
-    if (top + mh > vp.h - 4) top = r.top - mh - 4;
-    if (top < 4) top = 4;
+    if (left + mw > vp.w) left = vp.w - mw;
+    if (left < 0) left = 0;
+    if (top + mh > vp.h) top = r.top - mh - 4;
+    if (top < 0) top = 0;
     menu.style.left = Math.round(left) + 'px';
     menu.style.top  = Math.round(top) + 'px';
   }
@@ -1473,8 +1491,8 @@
   function clampMenuIntoView(menu) {
     const vp = viewport();
     const r = menu.getBoundingClientRect();
-    if (r.bottom <= vp.h - 4) return;
-    menu.style.top = Math.round(Math.max(4, vp.h - 4 - r.height)) + 'px';
+    if (r.bottom <= vp.h) return;
+    menu.style.top = Math.round(Math.max(0, vp.h - r.height)) + 'px';
   }
 
   // Drag a menu by its title bar. Deliberately not persisted: the position resets to the
@@ -1487,9 +1505,11 @@
       const r = menu.getBoundingClientRect();
       const dx = e.clientX - r.left, dy = e.clientY - r.top;
       const vp = viewport();
+      // Same reasoning as positionMenu: no inset, or the menu cannot be dragged to the
+      // window edge the panel itself is docked against.
       const onMove = ev => {
-        menu.style.left = Math.round(Math.max(4, Math.min(ev.clientX - dx, vp.w - r.width - 4))) + 'px';
-        menu.style.top  = Math.round(Math.max(4, Math.min(ev.clientY - dy, vp.h - r.height - 4))) + 'px';
+        menu.style.left = Math.round(Math.max(0, Math.min(ev.clientX - dx, vp.w - r.width))) + 'px';
+        menu.style.top  = Math.round(Math.max(0, Math.min(ev.clientY - dy, vp.h - r.height))) + 'px';
       };
       const onUp = () => {
         handle.releasePointerCapture(e.pointerId);
@@ -1534,49 +1554,62 @@
   function buildIntervalMenu() {
     const menu = ui.intervalMenu;
     menu.textContent = '';
-    const isPreset = REFRESH_OPTIONS.some(o => o.ms === settings.refreshMs);
-    for (const opt of REFRESH_OPTIONS) {
-      menu.appendChild(el('button', {
-        class: 'rnfp-menu-item' + (opt.ms === settings.refreshMs ? ' selected' : ''),
-        type: 'button', role: 'menuitem', text: opt.label,
-        title: opt.ms
-          ? 'Check for new notifications every ' + opt.label.replace('sec', 'seconds').replace('min', 'minutes') + '.'
-          : 'Never check on its own. The list only updates when you press Reload or reopen the panel.',
-        onclick: () => { setRefresh(opt.ms); closeMenus(); },
-      }));
-    }
-    menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
 
     // The live interval, always visible and always editable — no second popup. Muted while
     // it only mirrors the selected preset; `active` (full strength, no preset highlighted)
-    // once a custom value is the setting.
+    // once a custom value is the setting. A <label for> so that clicking anywhere on the
+    // row — the word "Custom" included — puts the caret in the box.
+    const INPUT_ID = 'rnfp-custom-secs';
     const input = el('input', {
-      type: 'number', min: String(MIN_REFRESH_MS / 1000), step: '5',
+      type: 'number', id: INPUT_ID, min: String(MIN_REFRESH_MS / 1000), step: '5',
       'aria-label': 'Custom refresh interval in seconds',
-      value: settings.refreshMs ? String(settings.refreshMs / 1000) : '',
     });
-    if (!settings.refreshMs) input.placeholder = 'off';
-    const row = el('div', {
-      class: 'rnfp-custom' + (isPreset ? '' : ' active'),
+    const row = el('label', {
+      class: 'rnfp-custom', for: INPUT_ID,
       title: 'Any interval you like, in seconds — at least ' + (MIN_REFRESH_MS / 1000) +
              '. Press Enter to apply. Reddit is being asked for your inbox each time, so ' +
              'very short intervals are a lot of requests.',
     }, el('span', { text: 'Custom' }), el('span', { class: 'rnfp-secs' }, input, el('span', { text: 'sec' })));
 
+    const presetBtns = REFRESH_OPTIONS.map(opt => {
+      const b = el('button', {
+        class: 'rnfp-menu-item', type: 'button', role: 'menuitem', text: opt.label,
+        title: opt.ms
+          ? 'Check for new notifications every ' + opt.label.replace('sec', 'seconds').replace('min', 'minutes') + '.'
+          : 'Never check on its own. The list only updates when you press Reload or reopen the panel.',
+        // Stays open and writes its seconds into the box, the same as a crib-sheet row.
+        // Picking an interval is a thing you may want to do twice before settling.
+        onclick: () => { setRefresh(opt.ms); sync(); },
+      });
+      b._ms = opt.ms;
+      return b;
+    });
+
+    // The single place the menu's appearance is derived from settings, so a preset click, a
+    // crib-sheet click and a typed value all leave it in the same consistent state without
+    // a rebuild (a rebuild drops focus and collapses the crib sheet).
+    function sync() {
+      const isPreset = REFRESH_OPTIONS.some(o => o.ms === settings.refreshMs);
+      input.value = settings.refreshMs ? String(settings.refreshMs / 1000) : '';
+      input.placeholder = settings.refreshMs ? '' : 'off';
+      row.classList.toggle('active', !isPreset);
+      row.classList.remove('invalid');
+      for (const b of presetBtns) b.classList.toggle('selected', b._ms === settings.refreshMs);
+    }
+
     const apply = () => {
       const secs = parseInt(input.value, 10);
       if (isNaN(secs) || secs * 1000 < MIN_REFRESH_MS) { row.classList.add('invalid'); return false; }
-      row.classList.remove('invalid');
       setRefresh(secs * 1000);
+      sync();
       return true;
     };
     input.addEventListener('input', () => row.classList.remove('invalid'));
     input.addEventListener('keydown', ev => {
       ev.stopPropagation();               // Escape belongs to the input first, not the panel
       if (ev.key === 'Enter') { if (apply()) closeMenus(); }
-      else if (ev.key === 'Escape') { buildIntervalMenu(); }
+      else if (ev.key === 'Escape') { sync(); input.blur(); }
     });
-    menu.appendChild(row);
 
     // Seconds get unreadable past a few minutes, so focusing the box drops down a crib
     // sheet of the long intervals. The rows are clickable as well as readable — mousedown
@@ -1586,21 +1619,11 @@
     for (const [label, secs] of LONG_INTERVALS) {
       refs.appendChild(el('button', {
         class: 'rnfp-ref', type: 'button', title: 'Set the interval to ' + label + '.',
-        onclick: () => { input.value = String(secs); if (apply()) { refreshCustomRow(); input.focus(); } },
+        onclick: () => { input.value = String(secs); apply(); input.focus(); },
       }, el('span', { text: label }), el('span', { class: 'rnfp-ref-secs', text: String(secs) })));
     }
     refs.addEventListener('mousedown', ev => ev.preventDefault());
-    menu.appendChild(refs);
 
-    // Keep the row's muted/active look honest after a reference click, without rebuilding
-    // the menu (which would drop focus and collapse the list).
-    function refreshCustomRow() {
-      const nowPreset = REFRESH_OPTIONS.some(o => o.ms === settings.refreshMs);
-      row.classList.toggle('active', !nowPreset);
-      for (const b of menu.querySelectorAll('.rnfp-menu-item')) {
-        b.classList.toggle('selected', b.textContent === refreshLabel(settings.refreshMs));
-      }
-    }
     input.addEventListener('focus', () => {
       input.select();
       refs.classList.add('open');
@@ -1610,8 +1633,14 @@
     // rather than silently discarding it.
     input.addEventListener('blur', () => {
       refs.classList.remove('open');
-      if (input.value !== '') apply();
+      if (input.value !== '') apply(); else sync();
     });
+
+    for (const b of presetBtns) menu.appendChild(b);
+    menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
+    menu.appendChild(row);
+    menu.appendChild(refs);
+    sync();
   }
 
   function toggleSettingsMenu(e) {
@@ -1623,7 +1652,7 @@
     ui.settingsMenu.classList.add('open');
     // Width and placement both come from positionMenu now: it stretches the menu to the
     // panel's exact width whenever the panel is the wider of the two.
-    positionMenu(ui.settingsMenu, ui.settingsBtn, panel);
+    positionMenu(ui.settingsMenu, ui.settingsBtn, panel, true);
   }
 
   function buildSettingsMenu() {

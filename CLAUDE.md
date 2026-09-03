@@ -412,3 +412,44 @@ are clickable as well as readable.
 the list closes out from under the click that was trying to use it. Clicking a row calls
 `refreshCustomRow()` rather than rebuilding the menu, because a rebuild drops focus and collapses
 the list. The box is `text-align: center` (was `right`).
+
+## The 4px inset was the misalignment (v6.11.0) — do not put it back
+
+`positionMenu` and `makeMenuDraggable` clamped menus to 4px inside the viewport. **The panel
+docks FLUSH with the window's right and bottom edges** (right/bottom offsets of 0), so a
+panel-width menu placed at the panel's left edge always tripped `left + mw > vp.w - 4` and was
+pushed 4px left of the panel it was meant to line up with. Every clamp is now zero-inset.
+
+Diagnosed by the user 2026-09-03, from a much better clue than the rendering gave: *the dragged
+menu could not reach the window edge either*. Two symptoms, one cause — a "safety margin" that
+fights a deliberate flush placement is a permanent offset, not a margin. Verified arithmetically
+in a harness: old code put a 310px-natural menu at 1556 against a panel at 1560; new code 1560.
+
+An earlier attempt (v6.10.0) blamed sub-pixel/border disagreement between `min-width` and
+`getBoundingClientRect`. That was wrong — setting the width outright was worth keeping, but it
+was not the bug.
+
+## Stretch is opt-in per menu (v6.11.0)
+
+`positionMenu(menu, anchor, centerOn, stretch)`. **Only the settings menu passes `stretch`.** The
+interval menu centres on the panel at its own natural width — it is a short list, and stretching
+it to panel width looked like a bug.
+
+## Interval menu behaves like one list (v6.11.0)
+
+- **Presets no longer close the menu.** They set the interval, then `sync()` writes the seconds
+  into the Custom box — the same thing a crib-sheet row does. Picking an interval is something
+  you may want to do twice before settling.
+- **`sync()` is the single derivation of appearance from settings** (input value + placeholder,
+  `.active`, `.invalid`, which preset is `.selected`). Every path calls it instead of rebuilding,
+  because a rebuild drops focus and collapses the crib sheet. Preset buttons carry `_ms` rather
+  than being matched on their label text.
+- **The Custom row is a `<label for>`**, so clicking the word "Custom" — or anywhere on the row —
+  puts the caret in the box. It also gets `.rnfp-custom:hover { background: var(--bg3) }`, the
+  same hover as the preset rows: it is one of the choices, not a caption.
+- **The box is `height: 22px; line-height: 20px` with no vertical padding.** With only padding
+  set, a flex row aligns an `<input>` on its own baseline, which sat the box low against the
+  label. Verified against a centre guide in the harness.
+
+`.rnfp-menu-bar` is 14px (the panel header's size); `.rnfp-menu-head` stays 13px. The window's
+title should outrank a section label inside it.
