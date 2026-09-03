@@ -502,39 +502,71 @@ instead of four per flash, nothing left to be out of step with, and the same beh
 and Slack have — their favicon badge is steady and only the title blinks. `tick()` now writes
 the title and nothing else; `setFlashIcon()` is gone.
 
-## The custom-interval box: it was the ink, not the box (v6.14.0)
+## The custom-interval box, settled (v6.15.0) — `align-items: baseline` + 2px pad-bottom
 
-Fourth pass at "the number box isn't centred vertically", and the first one to measure the right
-thing. **Every earlier attempt measured the input's `getBoundingClientRect()`, which was
-perfectly centred every time** — v6.9's height/line-height, v6.11's zero vertical padding,
-v6.13's shorthand-ordering fix all came back "centred" and the user kept seeing it off. The rect
-was never the thing they were looking at.
+Fifth pass, and the first with the input's own baseline actually measured. **v6.9, v6.11, v6.13
+and v6.14 all failed the same way: they measured `getBoundingClientRect()`, which reported the
+box perfectly centred every single time.** It was never the box. v6.14 even shipped a fractional
+`padding-bottom` / `top` pair derived from a *model* of where Chrome puts an input's text, and
+the model was wrong by a factor of two — that pass made the alignment measurably worse (digits
+0.3px above the words, where before they were 0.28px below).
 
-`align-items: center` centres **line boxes**. This font's 17.55px line box puts 14.0px above the
-baseline and reserves 3.55px below it for descenders — and `120`, `Custom` and `sec` have no
-descenders at all. So the ink sat low in every box that contained it: measured 2026-09-04, the
-digits had **6.93px of box above them and 5.78px below**. At the user's 125% display scale that
-1.15px is a whole device pixel of top-heaviness, on a bordered box, which is exactly the kind of
-thing the eye picks up and the arithmetic hides.
+**The measurement that settles it.** You cannot read an input's text position out of its rect,
+and its shadow DOM is not reachable. So flip its parent to `display: block` for one frame, drop
+a probe `<span>` in beside it, and let the browser baseline-align the two; the input's own
+baseline is then `probeBaseline − input.rect.top`. (The probe's baseline is the bottom edge of a
+zero-size `display:inline-block` span appended to it.) **Do not clone the input to measure it** —
+a clone moved out of the row stops matching `#rnfp-panel .rnfp-custom input` and silently loses
+every style you are trying to measure. That mistake produced one full round of identical,
+meaningless numbers.
 
-The fix is two halves that cancel, and it needs both — either alone just moves the problem:
+Measured on the real stylesheet, 2026-09-04, with plain `padding: 0 5px`: the digits' baseline
+sits **16.5px** below the border-box top, leaving **7.5px of box above them and 5.5px below**.
+Two pixels of top-heaviness on a bordered box — visible, and nothing to do with line boxes,
+descender slack or display scaling (all of which earlier passes blamed). `line-height: normal`
+and `line-height: 20px` measure identically, so that knob was never doing anything either.
 
-- `padding-bottom: 1.15px` shortens the content box, so Chrome's centring of the 20px line box
-  inside it **lifts the text** by half the difference (0.575px).
-- `position: relative; top: 0.575px` **pushes the border box down** by that same half.
+The fix is two lines, and each does one job:
 
-Net: the digits do not move on screen, so they stay on the baseline shared with `Custom` and
-`sec`, and the border box lands centred on the ink it holds. Verified in the harness: gaps
-6.43 / 6.57 (was 6.93 / 5.78), box centre 258.84 vs digit ink centre 258.77 and `Custom` ink
-centre 259.0 — every residual under 0.2px, against 1.15px before.
+| Change | Fixes |
+|---|---|
+| `.rnfp-custom` and `.rnfp-secs` → `align-items: baseline` (was `center`) | puts `120` on the same baseline as `Custom` and `sec` — **exactly 0.00px**, by construction, whatever the input's internal metrics turn out to be |
+| input → `padding: 0 5px 2px` | Chrome centres the line box in the CONTENT box, so padding-bottom lifts the text half its value: baseline 16.5 → 15.5, gaps **6.5 / 6.5** |
 
-`font: inherit` still has to come **first** in that block, because the shorthand includes
-line-height and silently reset the explicit value written above it. That is a real bug and worth
-keeping fixed, but it was **not** the misalignment: correcting it changed nothing visible.
+Baseline alignment is the load-bearing half. Centring aligned the input's *border box* with the
+label's *line box* and left the browser to decide where the text sat inside each; baseline
+alignment hands the browser the one question it can answer exactly, so the result no longer
+depends on a model of Chrome's text-control internals that I got wrong twice.
 
-**The lesson, and it generalises past this box: when someone says a control looks off-centre and
-the geometry says it is centred, measure the INK.** `getBoundingClientRect()` describes line
-boxes and border boxes; the eye is looking at glyphs. Probe a baseline with a zero-size
-`display:inline-block` span (its bottom edge sits on the baseline) and get the ink extent from
-`canvas` `measureText().actualBoundingBoxAscent/Descent`. Three rounds of "verified centred"
-were all measuring something nobody was complaining about.
+Verified against the real `STYLE`, at 1, 3 and 5 digits: `digitsVsCustom` and `digitsVsSec` both
+0.00, gaps 6.5 / 6.5, box 6px from the top of the row and 6px from the bottom, row height still
+34px. All three alignments — text-to-text, text-in-box, box-in-row — are exact simultaneously,
+and the row did not need the extra bottom room the user suspected it might.
+
+**Standing lesson, worth applying past this box: when a control looks off-centre and the geometry
+says it is centred, you are measuring the wrong object.** `getBoundingClientRect()` describes
+border boxes and line boxes; the eye is looking at glyphs. Measure the baseline.
+
+### Diagnostic to paste into the console on the live page
+
+Reproduces the numbers above from whatever is actually installed, which beats another theory:
+
+```js
+(()=>{const r=document.querySelector('#rnfp-panel .rnfp-custom'),i=r.querySelector('input'),
+l=r.firstChild,s=r.querySelector('.rnfp-secs').lastChild;
+const bl=e=>{const p=document.createElement('span');p.style.cssText='display:inline-block;width:0;height:0;vertical-align:baseline';
+e.appendChild(p);const y=p.getBoundingClientRect().bottom;p.remove();return y};
+const pa=i.parentNode,d=pa.style.display;pa.style.display='block';
+const pr=document.createElement('span');pr.textContent='x';pa.insertBefore(pr,i);
+const int=bl(pr)-i.getBoundingClientRect().top;pr.remove();pa.style.display=d;
+const b=i.getBoundingClientRect(),rr=r.getBoundingClientRect();
+const c=document.createElement('canvas').getContext('2d');c.font=getComputedStyle(i).font;
+const k=c.measureText(i.value||'120');
+console.log({digitsVsCustom:+(b.top+int-bl(l)).toFixed(2),digitsVsSec:+(b.top+int-bl(s)).toFixed(2),
+gapAbove:+(int-k.actualBoundingBoxAscent).toFixed(2),gapBelow:+(b.height-int-k.actualBoundingBoxDescent).toFixed(2),
+boxTopInRow:+(b.top-rr.top).toFixed(2),boxBotInRow:+(rr.bottom-b.bottom).toFixed(2),
+internalBaseline:+int.toFixed(2),boxH:b.height,rowH:rr.height,dpr:devicePixelRatio});})()
+```
+
+All four of `digitsVsCustom`, `digitsVsSec`, `gapAbove − gapBelow` and
+`boxTopInRow − boxBotInRow` should read 0.

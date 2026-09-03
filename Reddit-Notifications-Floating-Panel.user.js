@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.14.0
+// @version      6.15.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -902,7 +902,10 @@
        is what tells you which of the two you are on. */
     #${PANEL_ID} .rnfp-custom {
       display: flex;
-      align-items: center;
+      /* BASELINE, not center - see the input rule below. Centring aligned the input's border
+         box with the label's line box and left the browser to decide where the text sat
+         inside each; baseline alignment hands the browser the one job it can do exactly. */
+      align-items: baseline;
       justify-content: space-between;
       gap: 8px;
       padding: 6px 12px;
@@ -911,30 +914,27 @@
     }
     /* The same hover the preset rows above it get — it is one of the choices, not a caption. */
     #${PANEL_ID} .rnfp-custom:hover { background: var(--bg3); }
-    #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+    #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: baseline; gap: 5px; color: var(--muted); }
     #${PANEL_ID} .rnfp-custom input {
       width: 62px;
       /* The font shorthand sets line-height too, so it has to come FIRST: written after, it
-         silently reset the explicit line-height below to the panel's inherited 1.35. Worth
-         keeping, but it was NOT the misalignment - fixing it changed nothing visible. */
+         silently reset the explicit line-height below. Keep the order, but note it is NOT
+         what was misaligning anything - line-height: normal measures identically. */
       font: inherit;
       height: 22px;
       line-height: 20px;
-      /* Optical centring - the actual misalignment, measured 2026-09-04. align-items centres
-         LINE BOXES, and this font's line box reserves 3.55px below the baseline for
-         descenders that "120", "Custom" and "sec" do not have: the digits sat with 6.93px of
-         box above them and 5.78px below. That 1.15px of top-heaviness is a whole device pixel
-         at 125% display scale, and it is the "still not centred" that survived three passes
-         at this - each of which measured the box's rect (perfectly centred, always) instead
-         of the ink inside it.
-         padding-bottom shortens the content box, so Chrome's centring of the 20px line box
-         within it lifts the text by half the difference; top: then pushes the border box
-         down by that same half. Net: the digits do not move, so they stay on the baseline
-         shared with "Custom" and "sec", and the box lands centred on the ink it holds. Both
-         halves are needed - either one alone just moves the problem somewhere else. */
-      padding: 0 5px 1.15px;
-      position: relative;
-      top: 0.575px;
+      /* padding-bottom: 2px is the whole optical fix, and it is a MEASURED value, not a
+         nudge. An input's text does not sit where the box's arithmetic suggests: measured
+         2026-09-04, the digits' baseline sat 16.5px below the border-box top, leaving 7.5px
+         of box above the digits and 5.5px below - 2px of top-heaviness, plainly visible on a
+         bordered box. Chrome centres the line box in the CONTENT box, so padding-bottom
+         moves the text up half its value: 2px lands the baseline at 15.5 and the gaps at
+         6.5 / 6.5, dead level.
+         Four earlier passes missed this because they all measured getBoundingClientRect(),
+         which reported the box perfectly centred every single time - it was never the box.
+         Measure an input's baseline instead by flipping its parent to display:block for one
+         frame and letting the browser baseline-align it against a probe span. */
+      padding: 0 5px 2px;
       text-align: center;
       background: var(--bg);
       color: var(--muted);
