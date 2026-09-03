@@ -455,10 +455,15 @@ it to panel width looked like a bug.
 `.rnfp-menu-bar` is 14px (the panel header's size); `.rnfp-menu-head` stays 13px. The window's
 title should outrank a section label inside it.
 
-## Ticking "Flash the tab" previews it (v6.12.0)
+## Toggling "Flash the tab" previews it (v6.12.0, untick added in v6.13.0)
 
-`previewFlash()` runs one blink from the settings checkbox's `onChange`, so turning the option on
-demonstrates it instead of making the user wait for a real notification. Only on tick, not untick.
+`previewFlash()` runs one blink from the settings checkbox's `onChange`, so toggling the option
+demonstrates it instead of making the user wait for a real notification. **It fires on untick as
+well as on tick** (asked for 2026-09-03) — that is the moment you are deciding whether you want
+the thing, and it is the same demonstration either way. Which is why it deliberately does *not*
+test `settings.titleFlash`: the caller has just changed it, and a preview is an explicit request,
+not the automatic behaviour the setting governs. The `onChange` is now just `previewFlash` — the
+v6.12 wrapper that guarded on `settings.titleFlash` is what made it tick-only.
 
 Two things it has to get right, both about not lying to the user:
 
@@ -470,3 +475,44 @@ Two things it has to get right, both about not lying to the user:
 
 `startTitleFlash(onDone)` grew an optional completion callback for this; the normal path still
 falls through to `writeTitle(badgedTitle())`.
+
+## Title and favicon blink in step — one link, href swapped (v6.13.0)
+
+The two halves of the flash used to drift apart visibly. Both were always set in the same tick, so
+the cause was not the schedule but the DOM churn: `setFlashIcon(false)` **re-appended the page's
+own icon links** and `setFlashIcon(true)` detached them again, so every half-blink was a removal
+plus an insert. Browsers re-resolve the whole icon list on any such change and coalesce changes
+that land close together, so the icon arrived a frame behind the title.
+
+Now `beginIconFlash()` takes the page's icons out **once** and leaves a single link of ours in the
+head for the whole flash; `setFlashIcon(on)` only rewrites its `href`, and `endIconFlash()` puts
+the page's links back. Two consequences worth keeping:
+
+- **The link is created already pointing at `pageIconHref`**, so starting a flash is one head
+  mutation rather than an insert plus an immediate rewrite. `pageIconHref` is the *last*
+  `link[rel~=icon]` (the one the browser would have picked), or `/favicon.ico` when the page
+  declares none.
+- **An `href` rewrite is an attribute change, so the title's `<head>` MutationObserver never sees
+  it** — it is registered for `childList` + `characterData` only. Only begin/end touch childList,
+  and at both of those moments `document.title === titleWritten`, so the observer bails.
+
+`tick()` also sets the **icon before the title**: a title assignment shows immediately and the
+favicon only lands once the browser has re-resolved the link, so the slower of the two gets the
+head start. Residual skew is the browser's favicon update latency and is not ours to remove.
+
+## The custom-interval box: `font: inherit` was eating `line-height` (v6.13.0)
+
+Third attempt at this one, and the first with a measurement behind it. The rule declared
+`height: 22px; line-height: 20px` and then `font: inherit` **after** it. `font` is a shorthand
+that includes line-height, so it reset the explicit 20px back to the panel's inherited 1.35 —
+computed line-height measured **17.55px, not 20px**, in the harness. The 20px content box then had
+2.45px of slack for the browser to centre the text in, and half an odd number of subpixels rounds
+a pixel low on a fractional display scale, which is what the user kept seeing.
+
+`font: inherit` now comes **first** in the block. 22px box − 2px border = 20px content = 20px line:
+no slack left to round. Verified in the harness — computed line-height 20px, and the input, the
+"Custom" label and the row all share a centre of 258.28.
+
+**The general lesson: in these stylesheets, put any `font`/`background`/`border` shorthand at the
+top of its block.** A longhand written above a shorthand that covers it is dead code, and CSS gives
+no warning. Nothing here is byte-sized enough for a linter to be worth it; ordering is the fix.

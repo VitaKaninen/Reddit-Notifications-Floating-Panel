@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.12.0
+// @version      6.13.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -914,8 +914,14 @@
     #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
     #${PANEL_ID} .rnfp-custom input {
       width: 62px;
-      /* Explicit height + line-height, and no vertical padding. An input's own baseline is
-         what a flex row aligns to otherwise, which sat the box low against the label. */
+      /* The font shorthand is a SHORTHAND and line-height is one of the things it sets, so it has to come
+         FIRST. Written after, font: inherit silently reset line-height to the panel's
+         inherited 1.35 (= 17.55px) and the explicit value below never took effect — measured
+         2026-09-03, computed line-height was 17.55px, not 20px. That left 2.45px of slack in
+         the 20px content box for the browser to centre the text by, and half an odd number of
+         subpixels rounds a pixel low on a fractional display scale: the box that "still isn't
+         centred". 22px box - 2px border = 20px content = 20px line, so no slack is left. */
+      font: inherit;
       height: 22px;
       line-height: 20px;
       padding: 0 5px;
@@ -924,7 +930,6 @@
       color: var(--muted);
       border: 1px solid var(--border);
       border-radius: 4px;
-      font: inherit;
       transition: color .15s ease, border-color .15s ease;
     }
     /* No spinners: they cost ~15px of a narrow menu and the arrow keys still nudge. */
@@ -1695,8 +1700,8 @@
     const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true,
       'When the count goes up, blink the tab twice — the title reads "New Notification!" and the ' +
       'favicon swaps to a red count badge, then both settle back. The count alone is easy to miss. ' +
-      'Ticking this runs one now so you can see it.',
-      () => { if (settings.titleFlash) previewFlash(); });
+      'Toggling this runs one now so you can see it.',
+      previewFlash);
     const countRow = checkRow('Show the unread count in the tab title', 'titleCount', false,
       'Put the unread count at the front of the tab title, like (3) reddit. ' +
       'Only while the panel is open — that is when the script is polling.',
@@ -1933,8 +1938,9 @@
   // Note `%23` for the colour — a literal `#` in a data URI starts the fragment and
   // truncates the image.
   // ---------------------------------------------------------------------------
-  let savedIcons = null;   // the page's own <link rel=icon>s, detached while ours is up
-  let ourIcon    = null;
+  let savedIcons   = null;   // the page's own <link rel=icon>s, detached while ours is up
+  let ourIcon      = null;
+  let pageIconHref = null;   // where to point our link on the dark half of a blink
 
   function flashIconHref() {
     const n = titleCount > 99 ? '99+' : String(titleCount);
@@ -1946,55 +1952,80 @@
       + " dominant-baseline='central'%3E" + n + "%3C/text%3E%3C/svg%3E";
   }
 
+  // The page's icons come out ONCE, at the start of a flash, and a single link of ours stays
+  // in the head for the whole of it with only its href rewritten. The old code removed and
+  // re-appended link elements on every half-blink; the browser re-resolves the whole icon
+  // list on any such change and coalesces changes that arrive close together, so the icon
+  // landed a frame behind the title instead of in step with it.
+  function beginIconFlash() {
+    if (ourIcon || !document.head) return;
+    savedIcons = Array.from(document.head.querySelectorAll('link[rel~="icon"]'));
+    // The last icon link is the one the browser would have picked; with none declared, the
+    // implicit /favicon.ico is the honest thing to point back at.
+    pageIconHref = savedIcons.length ? savedIcons[savedIcons.length - 1].href : '/favicon.ico';
+    for (const l of savedIcons) l.remove();
+    // Created already pointing at the page's own icon, so inserting it is one head mutation
+    // rather than an insert plus an immediate href rewrite.
+    ourIcon = el('link', { rel: 'icon', href: pageIconHref });
+    document.head.appendChild(ourIcon);
+  }
+
   function setFlashIcon(on) {
-    if (!document.head) return;
-    if (on) {
-      if (ourIcon) return;
-      savedIcons = Array.from(document.head.querySelectorAll('link[rel~="icon"]'));
-      for (const l of savedIcons) l.remove();
-      ourIcon = el('link', { rel: 'icon', type: 'image/svg+xml', href: flashIconHref() });
-      document.head.appendChild(ourIcon);
-    } else {
-      if (ourIcon) { ourIcon.remove(); ourIcon = null; }
-      if (savedIcons) { for (const l of savedIcons) document.head.appendChild(l); savedIcons = null; }
-    }
+    if (!ourIcon) return;
+    const href = on ? flashIconHref() : pageIconHref;
+    if (on) ourIcon.type = 'image/svg+xml'; else ourIcon.removeAttribute('type');
+    if (ourIcon.getAttribute('href') !== href) ourIcon.setAttribute('href', href);
+  }
+
+  function endIconFlash() {
+    if (ourIcon) { ourIcon.remove(); ourIcon = null; }
+    if (savedIcons) { for (const l of savedIcons) document.head.appendChild(l); savedIcons = null; }
+    pageIconHref = null;
   }
   // Never leave Reddit wearing our favicon if the tab goes away mid-flash.
-  window.addEventListener('pagehide', () => setFlashIcon(false));
+  window.addEventListener('pagehide', endIconFlash);
 
   function stopTitleFlash() {
     if (titleFlashTimer) { clearTimeout(titleFlashTimer); titleFlashTimer = null; }
-    setFlashIcon(false);
+    endIconFlash();
   }
 
   // Blink the whole title, so the change is visible in the few characters a tab actually
   // shows, then settle on the "(n) " badge. The favicon blinks in step with it.
   function startTitleFlash(onDone) {
     stopTitleFlash();
+    beginIconFlash();
     let step = 0;
     const tick = () => {
       if (step >= FLASH_CYCLES * 2) {
         titleFlashTimer = null;
-        setFlashIcon(false);
+        endIconFlash();
         if (onDone) onDone(); else writeTitle(badgedTitle());
         return;
       }
       const alert = step % 2 === 0;
-      writeTitle(alert ? alertTitle() : badgedTitle());
+      // Icon before title, and both in the same tick: a title assignment shows immediately,
+      // the favicon only once the browser has re-resolved the icon link, so whichever of the
+      // two is going to lag is the one given the head start.
       setFlashIcon(alert);
+      writeTitle(alert ? alertTitle() : badgedTitle());
       step++;
       titleFlashTimer = setTimeout(tick, FLASH_MS);
     };
     tick();
   }
 
-  // Run one flash on demand, so ticking the setting shows what it does rather than making
-  // the user wait for a real notification. Stands in a count of 1 when nothing is actually
-  // unread — a preview against a count of 0 would blink an empty badge and a "0" favicon —
-  // and re-derives the true count when the blink ends, so it cannot leave the tab claiming
-  // an unread that is not there.
+  // Run one flash on demand, so toggling the setting shows what it does rather than making
+  // the user wait for a real notification. Deliberately fires on untick too — that is the
+  // moment you are deciding whether you want the thing, and it is the same demonstration
+  // either way — which is why it does NOT test settings.titleFlash: the caller has just
+  // changed it, and a preview is an explicit request rather than the automatic behaviour the
+  // setting governs. Stands in a count of 1 when nothing is actually unread (a preview
+  // against a count of 0 would blink an empty badge and a "0" favicon) and re-derives the
+  // true count when the blink ends, so it cannot leave the tab claiming an unread that is
+  // not there.
   function previewFlash() {
-    if (!settings.titleCount || !settings.titleFlash || !isOpen()) return;
+    if (!settings.titleCount || !isOpen()) return;
     watchTitle();
     titleCount = Math.max(1, titleCount);
     startTitleFlash(() => {
