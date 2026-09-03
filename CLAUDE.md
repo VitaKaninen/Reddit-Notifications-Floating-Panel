@@ -287,3 +287,35 @@ record doubles the states to reason about.
 Consequence worth knowing: with `rememberPages` off, manually opening the panel on a page that
 `startOpen` does not cover no longer survives a reload. That is the honest reading of the
 setting, and the checkbox is the fix.
+
+## Menu chrome: heading, button, and native-control theming (v6.8.0)
+
+- **`color-scheme` is set on the panel**, `dark` on the base and `light` on `.rnfp-light`.
+  Native checkboxes and radios take their *unchecked* look from the color-scheme in force,
+  which is the **host page's** unless the panel declares one — on a page that does not set it
+  they render as bright white discs, louder than the checked ones. Caught by rendering the
+  menu standalone (below); www.reddit.com happens to declare dark, so the live page hid it.
+- **`.rnfp-menu-head`** (the "Start with the panel open…" heading) is `--text` + weight 700.
+  It was `--muted`, which made the group label lighter than its own options.
+- **`.rnfp-menu-btn`** is the in-menu action button — bordered, `--bg3`, with
+  `:hover{filter:brightness(1.35)}` and `:active{translateY(1px) scale(.98); brightness(.8)}`,
+  plus `pulse()` on click. This is Sudokupad Tools' `spdrFxButton` pattern, including the
+  reason the click flash is an **inline filter and not a keyframe animation**: a CSS animation
+  restarts every time the menu goes `display:none` → `block`, so the button re-flashed on
+  every reopen. Clearing the inline value leaves nothing to replay. Only "Reset panel position
+  & size" uses it; the interval menu's "Custom…" is still a plain row.
+- **The settings menu is centred on the panel**, not right-aligned to the gear —
+  `positionMenu(menu, anchor, centerOn)`. Measured 2026-09-03: the menu is ~310px against the
+  panel's 286px, so centring costs ~12px of overhang a side instead of ~24px all on one.
+  The interval menu still right-aligns to its footer button.
+
+## Rendering the panel's CSS without Reddit
+
+Faster than the live-page eval for anything purely visual: extract the `STYLE` template
+literal straight out of the userscript, substitute `${PANEL_ID}`/`${CTX_ID}`/`${Z_INDEX}`, and
+write it into a static HTML page with the menu markup. Scraping the row labels back out of
+`buildSettingsMenu` with a regex keeps the harness from drifting from the script.
+
+**The file must sit inside the project folder** — the Browser pane renders anything outside it
+as a static snapshot with scripts CSP-blocked, so a harness in the scratchpad cannot self-measure
+or be screenshotted. Write it to the project root, look at it, then recycle it.

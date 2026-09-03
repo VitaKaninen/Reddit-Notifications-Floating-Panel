@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.7.0
+// @version      6.8.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -561,6 +561,11 @@
       --badge:     #d93900;   /* Reddit's --color-brand-background, sampled from its inbox badge */
       --danger:    #c0392b;
       --shadow:    0 8px 24px rgba(0,0,0,.6);
+      /* Native checkboxes and radios take their unchecked look from the color-scheme in
+         force, which is the HOST page's unless we say otherwise — on a page that does not
+         declare one they render as bright white discs against this dark menu, louder than
+         the checked ones. Pin it to whichever theme the panel itself is wearing. */
+      color-scheme: dark;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-size: 13px;
       line-height: 1.35;
@@ -568,6 +573,7 @@
       box-sizing: border-box;
     }
     #${PANEL_ID}.rnfp-light, #${CTX_ID}.rnfp-light {
+      color-scheme: light;
       --bg:      #ffffff;
       --bg2:     #f3f5f7;
       --bg3:     #e6e9ec;
@@ -851,8 +857,34 @@
     #${PANEL_ID} .rnfp-menu-item input[type=checkbox],
     #${PANEL_ID} .rnfp-menu-item input[type=radio] { margin: 0; accent-color: var(--check); }
     #${PANEL_ID} .rnfp-menu-item.nested { padding-left: 26px; }
-    /* Heading for the startOpen radio group: a label, not a target — the rows below it are. */
-    #${PANEL_ID} .rnfp-menu-head { padding: 6px 12px 2px; color: var(--muted); white-space: nowrap; cursor: default; }
+    /* Heading for the startOpen radio group: a label, not a target — the rows below it are.
+       Full-strength and bold, so it reads as the parent of the rows rather than a dimmer
+       sibling of them. */
+    #${PANEL_ID} .rnfp-menu-head {
+      padding: 6px 12px 2px;
+      color: var(--text);
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: default;
+    }
+    /* Action button inside a menu. Hover-brighten plus an :active depress, the same
+       feedback Sudokupad Tools gives its panel buttons — see rnfp-pulse for why the click
+       flash is an inline filter and not a keyframe animation. */
+    #${PANEL_ID} .rnfp-menu-btn {
+      display: block;
+      width: calc(100% - 24px);
+      margin: 4px 12px 2px;
+      padding: 6px 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      text-align: center;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: filter .18s ease, transform .07s ease;
+    }
+    #${PANEL_ID} .rnfp-menu-btn:hover { filter: brightness(1.35); }
+    #${PANEL_ID} .rnfp-menu-btn:active { transform: translateY(1px) scale(.98); filter: brightness(.8); }
     #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
     #${PANEL_ID} .rnfp-menu-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
     #${PANEL_ID} .rnfp-menu-row input[type=number] {
@@ -1308,20 +1340,42 @@
   // ---------------------------------------------------------------------------
   // Menus (auto-refresh interval, settings)
   // ---------------------------------------------------------------------------
-  function positionMenu(menu, anchor) {
+  // A brief dim that eases back out, so an instant action still reads as "did something".
+  // An inline filter rather than a keyframe animation, for the reason Sudokupad Tools
+  // documents: a CSS animation restarts every time the menu goes display:none -> block, so
+  // the button would re-flash on each reopen. Clearing the inline value leaves nothing to
+  // replay, and it eases back to whatever brightness hover has it at.
+  function pulse(btn) {
+    btn.style.filter = 'brightness(.5)';
+    clearTimeout(btn._pulseTimer);
+    btn._pulseTimer = setTimeout(() => { btn.style.filter = ''; }, 200);
+  }
+
+  // `centerOn`, when given, centres the menu horizontally on that element instead of
+  // right-aligning it to the anchor. The settings menu is wider than the panel, so hanging
+  // it off the gear put the whole overhang on one side; centred, it sits evenly over the
+  // panel it belongs to. Vertical placement is unchanged — below the anchor, flipped above
+  // it when there is no room, then clamped.
+  function positionMenu(menu, anchor, centerOn) {
     const r = anchor.getBoundingClientRect();
     const vp = viewport();
     menu.style.left = '0px';
     menu.style.top  = '0px';
     const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    let left = r.right - mw;
+    let left;
+    if (centerOn) {
+      const c = centerOn.getBoundingClientRect();
+      left = c.left + (c.width - mw) / 2;
+    } else {
+      left = r.right - mw;
+    }
     let top  = r.bottom + 4;
     if (left < 4) left = 4;
     if (left + mw > vp.w - 4) left = vp.w - mw - 4;
     if (top + mh > vp.h - 4) top = r.top - mh - 4;
     if (top < 4) top = 4;
-    menu.style.left = left + 'px';
-    menu.style.top  = top + 'px';
+    menu.style.left = Math.round(left) + 'px';
+    menu.style.top  = Math.round(top) + 'px';
   }
 
   function closeMenus() {
@@ -1387,7 +1441,7 @@
     if (!opening) return;
     buildSettingsMenu();
     ui.settingsMenu.classList.add('open');
-    positionMenu(ui.settingsMenu, ui.settingsBtn);
+    positionMenu(ui.settingsMenu, ui.settingsBtn, panel);
   }
 
   function buildSettingsMenu() {
@@ -1413,14 +1467,15 @@
         el('span', { text: label }), rb);
       return { row, rb };
     }
-    const switchRow = checkRow('Switch to the new tab', 'switchTab', true,
-      'Bring the new tab to the front instead of opening it in the background.');
+    const switchRow = checkRow('…and switch to the new tab immediately', 'switchTab', true,
+      'Bring the new tab to the front as it opens. Off, it opens in the background and you ' +
+      'stay on the page you are reading.');
     const newTabRow = checkRow('Open links in a new tab', 'newTab', false,
       'Clicking a notification opens it in a new tab, leaving the page you are on alone. ' +
       'Off, it navigates the current tab.',
       () => switchRow.row.classList.toggle('disabled', !settings.newTab));
     switchRow.row.classList.toggle('disabled', !settings.newTab);
-    const markRow = checkRow('Mark read when opened', 'markReadOnOpen', false,
+    const markRow = checkRow('Mark comments as read when opened', 'markReadOnOpen', false,
       'Opening a notification marks it read on Reddit, the same as clicking it on the inbox page.');
     const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true,
       'When the count goes up, blink the tab title twice so it catches your eye in a ' +
@@ -1446,7 +1501,7 @@
     const allPagesRow = radioRow('On every Reddit page', 'all',
       'Every page this script runs on, including your home feed, profiles, search and ' +
       'individual posts.');
-    const rememberRow = checkRow('Also remember any pages where I open / close it', 'rememberPages', true,
+    const rememberRow = checkRow('Remember open / closed state for any page', 'rememberPages', true,
       'Opening or closing the panel on a page is remembered for that page and overrides the ' +
       'choice above, in both directions. Kept for a year after your last visit, up to ' +
       PAGE_MAX.toLocaleString() + ' pages. Off, nothing is recorded and every page follows the ' +
@@ -1465,10 +1520,12 @@
     menu.appendChild(countRow.row);
     menu.appendChild(flashRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
-    menu.appendChild(el('button', { class: 'rnfp-menu-item', type: 'button', role: 'menuitem',
+    const resetBtn = el('button', { class: 'rnfp-menu-btn', type: 'button', role: 'menuitem',
       title: 'Put the panel back in its default place: tucked inside the right sidebar, flush ' +
              'with the bottom-right of the window.',
-      text: 'Reset panel position & size', onclick: () => { closeMenus(); resetPanel(); } }));
+      text: 'Reset panel position & size',
+      onclick: () => { pulse(resetBtn); closeMenus(); resetPanel(); } });
+    menu.appendChild(resetBtn);
   }
 
   // ---------------------------------------------------------------------------
