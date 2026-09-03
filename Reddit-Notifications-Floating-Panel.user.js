@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.13.0
+// @version      6.14.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -914,17 +914,27 @@
     #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
     #${PANEL_ID} .rnfp-custom input {
       width: 62px;
-      /* The font shorthand is a SHORTHAND and line-height is one of the things it sets, so it has to come
-         FIRST. Written after, font: inherit silently reset line-height to the panel's
-         inherited 1.35 (= 17.55px) and the explicit value below never took effect — measured
-         2026-09-03, computed line-height was 17.55px, not 20px. That left 2.45px of slack in
-         the 20px content box for the browser to centre the text by, and half an odd number of
-         subpixels rounds a pixel low on a fractional display scale: the box that "still isn't
-         centred". 22px box - 2px border = 20px content = 20px line, so no slack is left. */
+      /* The font shorthand sets line-height too, so it has to come FIRST: written after, it
+         silently reset the explicit line-height below to the panel's inherited 1.35. Worth
+         keeping, but it was NOT the misalignment - fixing it changed nothing visible. */
       font: inherit;
       height: 22px;
       line-height: 20px;
-      padding: 0 5px;
+      /* Optical centring - the actual misalignment, measured 2026-09-04. align-items centres
+         LINE BOXES, and this font's line box reserves 3.55px below the baseline for
+         descenders that "120", "Custom" and "sec" do not have: the digits sat with 6.93px of
+         box above them and 5.78px below. That 1.15px of top-heaviness is a whole device pixel
+         at 125% display scale, and it is the "still not centred" that survived three passes
+         at this - each of which measured the box's rect (perfectly centred, always) instead
+         of the ink inside it.
+         padding-bottom shortens the content box, so Chrome's centring of the 20px line box
+         within it lifts the text by half the difference; top: then pushes the border box
+         down by that same half. Net: the digits do not move, so they stay on the baseline
+         shared with "Custom" and "sec", and the box lands centred on the ink it holds. Both
+         halves are needed - either one alone just moves the problem somewhere else. */
+      padding: 0 5px 1.15px;
+      position: relative;
+      top: 0.575px;
       text-align: center;
       background: var(--bg);
       color: var(--muted);
@@ -1940,7 +1950,7 @@
   // ---------------------------------------------------------------------------
   let savedIcons   = null;   // the page's own <link rel=icon>s, detached while ours is up
   let ourIcon      = null;
-  let pageIconHref = null;   // where to point our link on the dark half of a blink
+  let pageIconHref = null;   // the page's own icon, remembered so it can be put back
 
   function flashIconHref() {
     const n = titleCount > 99 ? '99+' : String(titleCount);
@@ -1952,29 +1962,23 @@
       + " dominant-baseline='central'%3E" + n + "%3C/text%3E%3C/svg%3E";
   }
 
-  // The page's icons come out ONCE, at the start of a flash, and a single link of ours stays
-  // in the head for the whole of it with only its href rewritten. The old code removed and
-  // re-appended link elements on every half-blink; the browser re-resolves the whole icon
-  // list on any such change and coalesces changes that arrive close together, so the icon
-  // landed a frame behind the title instead of in step with it.
+  // The badge goes up ONCE when the flash starts and comes down when it ends. It does not
+  // blink along with the title, and that is the fix rather than a compromise: a page has no
+  // way to observe when the browser actually repaints tab chrome, so two channels told to
+  // change at the same instant will drift by whatever the browser's own favicon latency
+  // happens to be, and nothing in the page can measure or correct it. Alternating four times
+  // put that drift on show twice a second; a badge that simply stays up has one transition at
+  // each end and nothing left to be out of step with. It is also what Discord and Slack do —
+  // their favicon badge is steady, only the title blinks.
   function beginIconFlash() {
     if (ourIcon || !document.head) return;
     savedIcons = Array.from(document.head.querySelectorAll('link[rel~="icon"]'));
     // The last icon link is the one the browser would have picked; with none declared, the
-    // implicit /favicon.ico is the honest thing to point back at.
+    // implicit /favicon.ico is the honest thing to put back.
     pageIconHref = savedIcons.length ? savedIcons[savedIcons.length - 1].href : '/favicon.ico';
     for (const l of savedIcons) l.remove();
-    // Created already pointing at the page's own icon, so inserting it is one head mutation
-    // rather than an insert plus an immediate href rewrite.
-    ourIcon = el('link', { rel: 'icon', href: pageIconHref });
+    ourIcon = el('link', { rel: 'icon', type: 'image/svg+xml', href: flashIconHref() });
     document.head.appendChild(ourIcon);
-  }
-
-  function setFlashIcon(on) {
-    if (!ourIcon) return;
-    const href = on ? flashIconHref() : pageIconHref;
-    if (on) ourIcon.type = 'image/svg+xml'; else ourIcon.removeAttribute('type');
-    if (ourIcon.getAttribute('href') !== href) ourIcon.setAttribute('href', href);
   }
 
   function endIconFlash() {
@@ -1991,7 +1995,7 @@
   }
 
   // Blink the whole title, so the change is visible in the few characters a tab actually
-  // shows, then settle on the "(n) " badge. The favicon blinks in step with it.
+  // shows, then settle on the "(n) " badge. The favicon badge is raised for the whole of it.
   function startTitleFlash(onDone) {
     stopTitleFlash();
     beginIconFlash();
@@ -2003,12 +2007,7 @@
         if (onDone) onDone(); else writeTitle(badgedTitle());
         return;
       }
-      const alert = step % 2 === 0;
-      // Icon before title, and both in the same tick: a title assignment shows immediately,
-      // the favicon only once the browser has re-resolved the icon link, so whichever of the
-      // two is going to lag is the one given the head start.
-      setFlashIcon(alert);
-      writeTitle(alert ? alertTitle() : badgedTitle());
+      writeTitle(step % 2 === 0 ? alertTitle() : badgedTitle());
       step++;
       titleFlashTimer = setTimeout(tick, FLASH_MS);
     };

@@ -374,15 +374,16 @@ bell count and on the generated favicon badge.
 **A page cannot colour its own browser tab.** There is no API for tab chrome;
 `<meta name="theme-color">` only reaches mobile browser UI. The favicon is the one pixel of the
 tab a page owns, which is how Discord and Slack do the non-title half of their flash — so the
-flash now alternates a generated badge icon with the page's real one.
+flash also swaps in a generated badge icon. (v6.10–6.13 **alternated** it with the page's real
+icon on every half-blink; v6.14 raises it once for the whole flash instead — see below.)
 
 - Icon is an **SVG data URI**, not a canvas: drawing Reddit's own favicon (redditstatic.com,
   cross-origin) into a canvas taints it and `toDataURL` throws. `%23d93900`, never a literal `#`
   — that would start the fragment and truncate the image.
 - Font size steps down at 2 and 3 digits; >99 shows `99+`. Verified legible at 16px.
-- `setFlashIcon(true)` **detaches** the page's own `link[rel~=icon]` elements and appends ours;
-  `false` puts them back. Also wired to `pagehide`, so a tab closed mid-flash never leaves Reddit
-  wearing our icon.
+- `beginIconFlash()` **detaches** the page's own `link[rel~=icon]` elements and appends ours;
+  `endIconFlash()` puts them back. The latter is also wired to `pagehide`, so a tab closed
+  mid-flash never leaves Reddit wearing our icon.
 - The title's `<head>` MutationObserver sees these link changes, but bails on
   `document.title === titleWritten`, so there is no loop.
 - Alert text is "New Notification!" / "n New Notifications!" (settled 2026-09-03: it started as
@@ -476,43 +477,64 @@ Two things it has to get right, both about not lying to the user:
 `startTitleFlash(onDone)` grew an optional completion callback for this; the normal path still
 falls through to `writeTitle(badgedTitle())`.
 
-## Title and favicon blink in step — one link, href swapped (v6.13.0)
+## The favicon badge does not blink (v6.14.0) — and that IS the fix
 
-The two halves of the flash used to drift apart visibly. Both were always set in the same tick, so
-the cause was not the schedule but the DOM churn: `setFlashIcon(false)` **re-appended the page's
-own icon links** and `setFlashIcon(true)` detached them again, so every half-blink was a removal
-plus an insert. Browsers re-resolve the whole icon list on any such change and coalesce changes
-that land close together, so the icon arrived a frame behind the title.
+Twice now the title and the favicon were reported blinking visibly out of step — the user
+measured roughly 400ms between the icon changing and the text changing, then ~600ms before it
+came round again. Both were always written in the same tick, so the schedule was never the
+problem, and two attempts to close the gap by tidying the DOM work failed:
 
-Now `beginIconFlash()` takes the page's icons out **once** and leaves a single link of ours in the
-head for the whole flash; `setFlashIcon(on)` only rewrites its `href`, and `endIconFlash()` puts
-the page's links back. Two consequences worth keeping:
+- **v6.12** removed and re-appended `<link rel=icon>` elements on every half-blink.
+- **v6.13** kept one link for the whole flash and rewrote its `href`, on the theory that the
+  element churn was making the browser re-resolve the icon list late. **It changed nothing.**
+  Both attempts are dead; do not revive either as an explanation.
 
-- **The link is created already pointing at `pageIconHref`**, so starting a flash is one head
-  mutation rather than an insert plus an immediate rewrite. `pageIconHref` is the *last*
-  `link[rel~=icon]` (the one the browser would have picked), or `/favicon.ico` when the page
-  declares none.
-- **An `href` rewrite is an attribute change, so the title's `<head>` MutationObserver never sees
-  it** — it is registered for `childList` + `characterData` only. Only begin/end touch childList,
-  and at both of those moments `document.title === titleWritten`, so the observer bails.
+**The reason no timing fix can work: a page cannot observe when the browser repaints tab
+chrome.** There is no event, no callback, and no way to read it back. A `document.title`
+assignment shows up on its own schedule and a favicon change on another, and the gap between
+them is the browser's, inside a surface the page does not own. Two channels told to change at
+the same instant will drift by whatever that gap happens to be, and the page cannot measure the
+drift, let alone correct it. **Any fix phrased as "set them closer together" is guessing.**
 
-`tick()` also sets the **icon before the title**: a title assignment shows immediately and the
-favicon only lands once the browser has re-resolved the link, so the slower of the two gets the
-head start. Residual skew is the browser's favicon update latency and is not ours to remove.
+So v6.14 removes the thing that put the drift on display: **the badge is raised once when the
+flash begins and lowered when it ends.** It does not alternate. One transition at each end
+instead of four per flash, nothing left to be out of step with, and the same behaviour Discord
+and Slack have — their favicon badge is steady and only the title blinks. `tick()` now writes
+the title and nothing else; `setFlashIcon()` is gone.
 
-## The custom-interval box: `font: inherit` was eating `line-height` (v6.13.0)
+## The custom-interval box: it was the ink, not the box (v6.14.0)
 
-Third attempt at this one, and the first with a measurement behind it. The rule declared
-`height: 22px; line-height: 20px` and then `font: inherit` **after** it. `font` is a shorthand
-that includes line-height, so it reset the explicit 20px back to the panel's inherited 1.35 —
-computed line-height measured **17.55px, not 20px**, in the harness. The 20px content box then had
-2.45px of slack for the browser to centre the text in, and half an odd number of subpixels rounds
-a pixel low on a fractional display scale, which is what the user kept seeing.
+Fourth pass at "the number box isn't centred vertically", and the first one to measure the right
+thing. **Every earlier attempt measured the input's `getBoundingClientRect()`, which was
+perfectly centred every time** — v6.9's height/line-height, v6.11's zero vertical padding,
+v6.13's shorthand-ordering fix all came back "centred" and the user kept seeing it off. The rect
+was never the thing they were looking at.
 
-`font: inherit` now comes **first** in the block. 22px box − 2px border = 20px content = 20px line:
-no slack left to round. Verified in the harness — computed line-height 20px, and the input, the
-"Custom" label and the row all share a centre of 258.28.
+`align-items: center` centres **line boxes**. This font's 17.55px line box puts 14.0px above the
+baseline and reserves 3.55px below it for descenders — and `120`, `Custom` and `sec` have no
+descenders at all. So the ink sat low in every box that contained it: measured 2026-09-04, the
+digits had **6.93px of box above them and 5.78px below**. At the user's 125% display scale that
+1.15px is a whole device pixel of top-heaviness, on a bordered box, which is exactly the kind of
+thing the eye picks up and the arithmetic hides.
 
-**The general lesson: in these stylesheets, put any `font`/`background`/`border` shorthand at the
-top of its block.** A longhand written above a shorthand that covers it is dead code, and CSS gives
-no warning. Nothing here is byte-sized enough for a linter to be worth it; ordering is the fix.
+The fix is two halves that cancel, and it needs both — either alone just moves the problem:
+
+- `padding-bottom: 1.15px` shortens the content box, so Chrome's centring of the 20px line box
+  inside it **lifts the text** by half the difference (0.575px).
+- `position: relative; top: 0.575px` **pushes the border box down** by that same half.
+
+Net: the digits do not move on screen, so they stay on the baseline shared with `Custom` and
+`sec`, and the border box lands centred on the ink it holds. Verified in the harness: gaps
+6.43 / 6.57 (was 6.93 / 5.78), box centre 258.84 vs digit ink centre 258.77 and `Custom` ink
+centre 259.0 — every residual under 0.2px, against 1.15px before.
+
+`font: inherit` still has to come **first** in that block, because the shorthand includes
+line-height and silently reset the explicit value written above it. That is a real bug and worth
+keeping fixed, but it was **not** the misalignment: correcting it changed nothing visible.
+
+**The lesson, and it generalises past this box: when someone says a control looks off-centre and
+the geometry says it is centred, measure the INK.** `getBoundingClientRect()` describes line
+boxes and border boxes; the eye is looking at glyphs. Probe a baseline with a zero-size
+`display:inline-block` span (its bottom edge sits on the baseline) and get the ink extent from
+`canvas` `measureText().actualBoundingBoxAscent/Descent`. Three rounds of "verified centred"
+were all measuring something nobody was complaining about.
