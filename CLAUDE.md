@@ -205,3 +205,31 @@ or use Reddit's own dark theme.
 - Custom elements: only 17 `:not(:defined)`, all lazy/ad/player elements. `customElements` fine.
 - This userscript: the panel is a 440x620 fixed element built only on right-clicking the bell.
   It cannot blank the page, and it is not loaded when the blanking happens.
+
+## Checkbox blue is shared across the whole Monkey Scripts folder (v6.6.0)
+
+Settings checkmarks are `--check: #89b4fa` — **not** `--accent`. `--accent` stays Reddit orange
+`#ff4500` and still owns the spinner, the selected menu item, "Load more" and the context-menu
+hover; repointing it would turn all of those blue too, which is why the checkbox got its own
+variable. `#89b4fa` is the Catppuccin Mocha blue that Forget-Me-Not, Sudokupad Tools and
+Forum-Stumbler all use for their checkboxes — see the parent folder's `CLAUDE.md`.
+
+## Auto-open on load (v6.6.0)
+
+Two nested settings, matching the new-tab and tab-title pairs:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `autoOpenSub` | **on** | open the panel on load when `location.pathname` matches `/^\/r\/[^/]+/` (covers subreddit listings *and* post pages inside a subreddit) |
+| `autoOpenAll` | off | nested under it — open on every Reddit page instead. Greyed out while `autoOpenSub` is off, and ignored then too |
+
+- **`rnfp.dismissed` (sessionStorage) is what makes this dismissible.** Closing the panel by hand
+  sets it and auto-open skips the rest of the tab session; `openPanel` clears it, and so does
+  ticking `autoOpenSub` back on (otherwise the setting looks broken — you turn it on and nothing
+  happens because you closed the panel ten minutes ago).
+- Only fires at `@run-at document-idle`, i.e. on real page loads. Reddit's SPA navigations do not
+  re-run the script (see the shared `CLAUDE.md` on the Navigation API), so navigating from home to
+  a subreddit in-place will *not* auto-open the panel — only a hard load of that URL does.
+- Existing installs pick the defaults up for free: `loadJSON` is
+  `Object.assign({}, DEFAULT_SETTINGS, parsed)`, so keys added to `DEFAULT_SETTINGS` land on saves
+  written by older versions.

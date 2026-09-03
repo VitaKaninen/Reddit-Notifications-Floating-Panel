@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.5.0
+// @version      6.6.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -83,6 +83,7 @@
   const KEY_SETTINGS = 'rnfp.settings';
   const SS_OPEN      = 'rnfp.open';
   const SS_MINIMIZED = 'rnfp.minimized';
+  const SS_DISMISSED = 'rnfp.dismissed';
 
   const DEFAULT_SETTINGS = {
     refreshMs: 120000,
@@ -91,6 +92,8 @@
     markReadOnOpen: true,
     titleCount: true,
     titleFlash: true,
+    autoOpenSub: true,
+    autoOpenAll: false,
   };
 
   // Tab title indicator: how many times the title blinks when the unread count goes up.
@@ -474,6 +477,7 @@
       --text:      #d7dadc;
       --muted:     #8a8d91;
       --accent:    #ff4500;
+      --check:     #89b4fa;   /* shared checkbox blue across these userscripts — deliberately NOT --accent */
       --badge:     #d93900;   /* Reddit's --color-brand-background, sampled from its inbox badge */
       --danger:    #c0392b;
       --shadow:    0 8px 24px rgba(0,0,0,.6);
@@ -764,7 +768,7 @@
     }
     #${PANEL_ID} .rnfp-menu-item:hover { background: var(--bg3); }
     #${PANEL_ID} .rnfp-menu-item.selected { color: var(--accent); font-weight: 600; }
-    #${PANEL_ID} .rnfp-menu-item input[type=checkbox] { margin: 0; accent-color: var(--accent); }
+    #${PANEL_ID} .rnfp-menu-item input[type=checkbox] { margin: 0; accent-color: var(--check); }
     #${PANEL_ID} .rnfp-menu-item.nested { padding-left: 26px; }
     #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
     #${PANEL_ID} .rnfp-menu-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
@@ -995,6 +999,7 @@
     applyTheme(panel);
     layoutPanel();
     sessionStorage.setItem(SS_OPEN, '1');
+    sessionStorage.removeItem(SS_DISMISSED);
     scheduleAnchorRetries();
 
     renderList();
@@ -1014,6 +1019,19 @@
     if (panel) panel.remove();
     panel = null;
     sessionStorage.removeItem(SS_OPEN);
+    // Closing the panel is a decision about this tab, not just this page load. Without
+    // this, auto-open would put it straight back on the next reload/navigation and there
+    // would be no way to dismiss it short of turning the setting off.
+    sessionStorage.setItem(SS_DISMISSED, '1');
+  }
+
+  // Auto-open on load. `autoOpenAll` is nested under `autoOpenSub` in the menu and, like
+  // the other nested pairs here, only applies while its parent is on.
+  const SUBREDDIT_PATH = /^\/r\/[^/]+/;
+  function shouldAutoOpen() {
+    if (!settings.autoOpenSub) return false;
+    if (settings.autoOpenAll) return true;
+    return SUBREDDIT_PATH.test(location.pathname);
   }
 
   function togglePanel() { if (isOpen()) closePanel(); else openPanel(); }
@@ -1285,10 +1303,21 @@
       refreshTitle();
     });
     flashRow.row.classList.toggle('disabled', !settings.titleCount);
+    const allRow = checkRow('…and on every Reddit page', 'autoOpenAll', true);
+    const subRow = checkRow('Open automatically on subreddit pages', 'autoOpenSub', false, () => {
+      allRow.row.classList.toggle('disabled', !settings.autoOpenSub);
+      // Turning it back on is a fresh intent, so forget that the panel was dismissed
+      // earlier in this tab — otherwise the setting would look like it did nothing.
+      if (settings.autoOpenSub) sessionStorage.removeItem(SS_DISMISSED);
+    });
+    allRow.row.classList.toggle('disabled', !settings.autoOpenSub);
     menu.appendChild(newTabRow.row);
     menu.appendChild(switchRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(markRow.row);
+    menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
+    menu.appendChild(subRow.row);
+    menu.appendChild(allRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
     menu.appendChild(countRow.row);
     menu.appendChild(flashRow.row);
@@ -1634,7 +1663,10 @@
   // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
-  if (sessionStorage.getItem(SS_OPEN) === '1') {
+  // The panel was open in this tab before the reload, or the page qualifies for auto-open
+  // and the panel has not been closed by hand since the tab was opened.
+  if (sessionStorage.getItem(SS_OPEN) === '1' ||
+      (shouldAutoOpen() && sessionStorage.getItem(SS_DISMISSED) !== '1')) {
     if (document.body) openPanel();
     else document.addEventListener('DOMContentLoaded', openPanel, { once: true });
   }
