@@ -385,8 +385,9 @@ flash now alternates a generated badge icon with the page's real one.
   wearing our icon.
 - The title's `<head>` MutationObserver sees these link changes, but bails on
   `document.title === titleWritten`, so there is no loop.
-- Alert text is now "New Comment!" / "n New Comments!" (asked for 2026-09-03). Note this is
-  narrower than reality — the inbox also carries post replies, mentions and awards.
+- Alert text is "New Notification!" / "n New Notifications!" (settled 2026-09-03: it started as
+  "New Comment!", which was narrower than the inbox, since that also carries post replies,
+  mentions and awards).
 
 ## Menu placement (v6.10.0)
 
@@ -453,3 +454,19 @@ it to panel width looked like a bug.
 
 `.rnfp-menu-bar` is 14px (the panel header's size); `.rnfp-menu-head` stays 13px. The window's
 title should outrank a section label inside it.
+
+## Ticking "Flash the tab" previews it (v6.12.0)
+
+`previewFlash()` runs one blink from the settings checkbox's `onChange`, so turning the option on
+demonstrates it instead of making the user wait for a real notification. Only on tick, not untick.
+
+Two things it has to get right, both about not lying to the user:
+
+- **It stands in a count of 1 when nothing is unread.** A preview at 0 would blink an empty badge
+  and a favicon reading "0".
+- **It re-derives the true count from `items` when the blink ends**, rather than restoring a value
+  captured at the start — a refresh landing mid-preview would make the captured one stale, and the
+  tab would be left claiming an unread that is not there.
+
+`startTitleFlash(onDone)` grew an optional completion callback for this; the normal path still
+falls through to `writeTitle(badgedTitle())`.

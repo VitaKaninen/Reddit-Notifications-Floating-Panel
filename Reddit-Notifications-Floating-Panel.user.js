@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.11.0
+// @version      6.12.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -1693,8 +1693,10 @@
     const markRow = checkRow('Mark comments as read when opened', 'markReadOnOpen', false,
       'Opening a notification marks it read on Reddit, the same as clicking it on the inbox page.');
     const flashRow = checkRow('Flash the tab when they arrive', 'titleFlash', true,
-      'When the count goes up, blink the tab twice — the title reads "New Comment!" and the ' +
-      'favicon swaps to a red count badge, then both settle back. The count alone is easy to miss.');
+      'When the count goes up, blink the tab twice — the title reads "New Notification!" and the ' +
+      'favicon swaps to a red count badge, then both settle back. The count alone is easy to miss. ' +
+      'Ticking this runs one now so you can see it.',
+      () => { if (settings.titleFlash) previewFlash(); });
     const countRow = checkRow('Show the unread count in the tab title', 'titleCount', false,
       'Put the unread count at the front of the tab title, like (3) reddit. ' +
       'Only while the panel is open — that is when the script is polling.',
@@ -1914,7 +1916,7 @@
   }
 
   function alertTitle() {
-    return titleCount > 1 ? titleCount + ' New Comments!' : 'New Comment!';
+    return titleCount > 1 ? titleCount + ' New Notifications!' : 'New Notification!';
   }
 
   // ---------------------------------------------------------------------------
@@ -1967,11 +1969,16 @@
 
   // Blink the whole title, so the change is visible in the few characters a tab actually
   // shows, then settle on the "(n) " badge. The favicon blinks in step with it.
-  function startTitleFlash() {
+  function startTitleFlash(onDone) {
     stopTitleFlash();
     let step = 0;
     const tick = () => {
-      if (step >= FLASH_CYCLES * 2) { titleFlashTimer = null; setFlashIcon(false); writeTitle(badgedTitle()); return; }
+      if (step >= FLASH_CYCLES * 2) {
+        titleFlashTimer = null;
+        setFlashIcon(false);
+        if (onDone) onDone(); else writeTitle(badgedTitle());
+        return;
+      }
       const alert = step % 2 === 0;
       writeTitle(alert ? alertTitle() : badgedTitle());
       setFlashIcon(alert);
@@ -1979,6 +1986,21 @@
       titleFlashTimer = setTimeout(tick, FLASH_MS);
     };
     tick();
+  }
+
+  // Run one flash on demand, so ticking the setting shows what it does rather than making
+  // the user wait for a real notification. Stands in a count of 1 when nothing is actually
+  // unread — a preview against a count of 0 would blink an empty badge and a "0" favicon —
+  // and re-derives the true count when the blink ends, so it cannot leave the tab claiming
+  // an unread that is not there.
+  function previewFlash() {
+    if (!settings.titleCount || !settings.titleFlash || !isOpen()) return;
+    watchTitle();
+    titleCount = Math.max(1, titleCount);
+    startTitleFlash(() => {
+      titleCount = items.filter(i => i.unread).length;
+      writeTitle(badgedTitle());
+    });
   }
 
   function watchTitle() {
