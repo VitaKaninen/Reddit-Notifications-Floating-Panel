@@ -319,3 +319,45 @@ write it into a static HTML page with the menu markup. Scraping the row labels b
 **The file must sit inside the project folder** — the Browser pane renders anything outside it
 as a static snapshot with scripts CSP-blocked, so a harness in the scratchpad cannot self-measure
 or be screenshotted. Write it to the project root, look at it, then recycle it.
+
+## Custom refresh interval is inline, not a second popup (v6.9.0)
+
+The interval menu's "Custom…" button used to swap the whole menu for a number box + OK. It now
+ends in a permanent `Custom [ n ] sec` row that always shows the live interval:
+
+- **The box's colour is the state indicator.** Muted while it merely mirrors a selected preset;
+  `.rnfp-custom.active` (full strength, and no preset row highlighted) once a custom value is the
+  live setting. `Off` shows an empty box with an `off` placeholder.
+- **Commits on Enter *and* on blur**, so clicking away from a typed number keeps it. Escape
+  rebuilds the menu, which reverts. Invalid (< `MIN_REFRESH_MS`) adds `.invalid` — a red border —
+  rather than silently refusing.
+- `keydown` is `stopPropagation`'d so Escape reaches the input before the panel's global handler.
+- Spinners are hidden (`-webkit-appearance:none` + `-moz-appearance:textfield`); arrow keys still
+  nudge. Sudokupad's `mkNumBox` avoided `type=number` for exactly this reason, but it only had
+  inline styles available — a stylesheet can reach the spin-button pseudo-elements.
+- The old "inject the non-preset value as an extra row" hack is gone: the box displays it now.
+  `.rnfp-menu-row` / `.rnfp-ok` CSS went with it.
+
+## Settings menu is never narrower than the panel (v6.9.0)
+
+`ui.settingsMenu.style.minWidth = panel.offsetWidth + 'px'` on every open (the panel is
+resizable, so it must be re-measured). It can still be *wider* — rows are `white-space: nowrap`
+and a label will not be truncated to fit. Combined with the v6.8 centring, a menu at exactly the
+panel's width now aligns flush with it. Only the settings menu does this; the interval menu is a
+short list anchored to a footer control and looks wrong stretched.
+
+## Tooltip coverage (v6.9.0)
+
+Every control now has a `title`. The two dynamic ones are the ones worth knowing about:
+
+- **`updateCloseTip()`** — the close button says something different depending on
+  `rememberPages`, because closing means two different things and which one is in force is
+  exactly what the user cannot see. Called at build and from the remember checkbox's `onChange`.
+- **`ui.title.title`** and **`ui.footLeft.title`** are rebuilt in `updateBadge()` / `updateFoot()`
+  with the live counts and fetch time.
+
+Interval presets get "Check for new notifications every X"; `Off` explains that Reload is then
+the only way. The bell context menu's four entries carry a `tip` field.
+
+**Audit trick:** grep for `title:` misses multi-line `el(...)` calls. Scan for `el('button'` /
+`el('a'` and check the following ~8 lines instead — that is what found the context menu had none.

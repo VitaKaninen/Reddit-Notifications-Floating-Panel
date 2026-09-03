@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.8.0
+// @version      6.9.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -885,25 +885,41 @@
     }
     #${PANEL_ID} .rnfp-menu-btn:hover { filter: brightness(1.35); }
     #${PANEL_ID} .rnfp-menu-btn:active { transform: translateY(1px) scale(.98); filter: brightness(.8); }
-    #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
-    #${PANEL_ID} .rnfp-menu-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px; }
-    #${PANEL_ID} .rnfp-menu-row input[type=number] {
-      width: 64px;
-      padding: 3px 5px;
+
+    /* Custom refresh interval, shown inline at the foot of the interval menu rather than
+       behind a "Custom…" click. The box is muted while it merely mirrors the selected
+       preset and goes full strength once a custom value is the live setting, so its colour
+       is what tells you which of the two you are on. */
+    #${PANEL_ID} .rnfp-custom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 12px;
+      white-space: nowrap;
+    }
+    #${PANEL_ID} .rnfp-custom .rnfp-secs { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+    #${PANEL_ID} .rnfp-custom input {
+      width: 52px;
+      padding: 2px 5px;
+      text-align: right;
       background: var(--bg);
-      color: var(--text);
+      color: var(--muted);
       border: 1px solid var(--border);
       border-radius: 4px;
       font: inherit;
+      transition: color .15s ease, border-color .15s ease;
     }
-    #${PANEL_ID} .rnfp-menu-row .rnfp-ok {
-      padding: 3px 8px;
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
+    /* No spinners: they cost ~15px of a narrow menu and the arrow keys still nudge. */
+    #${PANEL_ID} .rnfp-custom input::-webkit-outer-spin-button,
+    #${PANEL_ID} .rnfp-custom input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    #${PANEL_ID} .rnfp-custom input { -moz-appearance: textfield; }
+    #${PANEL_ID} .rnfp-custom input:hover { border-color: var(--muted); }
+    #${PANEL_ID} .rnfp-custom input:focus { color: var(--text); border-color: var(--check); outline: none; }
+    #${PANEL_ID} .rnfp-custom.active input,
+    #${PANEL_ID} .rnfp-custom.active .rnfp-secs { color: var(--text); }
+    #${PANEL_ID} .rnfp-custom.invalid input { border-color: var(--danger); color: var(--text); }
+    #${PANEL_ID} .rnfp-menu-item.disabled { opacity: .4; pointer-events: none; }
     #${PANEL_ID} .rnfp-menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
 
     /* Resize edges */
@@ -1040,12 +1056,22 @@
     ui.bell      = el('span', { class: 'rnfp-bell' }, ICON.bell(), ui.count);
     ui.title     = el('div', { class: 'rnfp-title' }, ui.bell, ui.titleText);
 
-    ui.markAllBtn  = el('button', { class: 'rnfp-btn', type: 'button', title: 'Mark all as read', 'aria-label': 'Mark all as read', onclick: onMarkAllClick }, ICON.checkAll());
-    ui.reloadBtn   = el('button', { class: 'rnfp-btn', type: 'button', title: 'Reload', 'aria-label': 'Reload', onclick: () => refresh(true) }, ICON.reload());
-    ui.intervalBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Auto-refresh interval', 'aria-label': 'Auto-refresh interval', onclick: toggleIntervalMenu }, ICON.chevron());
-    ui.settingsBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Settings', 'aria-label': 'Settings', onclick: toggleSettingsMenu }, ICON.gear());
+    ui.markAllBtn  = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Mark all as read',
+      title: 'Mark every notification in your Reddit inbox as read — not only the ones listed here.',
+      onclick: onMarkAllClick }, ICON.checkAll());
+    ui.reloadBtn   = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Reload',
+      title: 'Fetch the list from Reddit again right now.',
+      onclick: () => refresh(true) }, ICON.reload());
+    ui.intervalBtn = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Auto-refresh interval',
+      title: 'How often the panel checks Reddit for new notifications while it is open.',
+      onclick: toggleIntervalMenu }, ICON.chevron());
+    ui.settingsBtn = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Settings',
+      title: 'Settings for this panel.',
+      onclick: toggleSettingsMenu }, ICON.gear());
     ui.minBtn      = el('button', { class: 'rnfp-btn', type: 'button', title: 'Minimize', 'aria-label': 'Minimize', onclick: toggleMinimized }, ICON.minimize());
-    ui.closeBtn    = el('button', { class: 'rnfp-btn rnfp-close', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closePanelByUser }, ICON.close());
+    ui.closeBtn    = el('button', { class: 'rnfp-btn rnfp-close', type: 'button', 'aria-label': 'Close',
+      onclick: closePanelByUser }, ICON.close());
+    updateCloseTip();
 
     ui.header = el('div', { class: 'rnfp-header' },
       ui.title,
@@ -1060,11 +1086,15 @@
 
     ui.list   = el('ul', { class: 'rnfp-list' });
     ui.status = el('div', { class: 'rnfp-status' });
-    ui.more   = el('button', { class: 'rnfp-more', type: 'button', text: 'Load more', onclick: loadMore });
+    ui.more   = el('button', { class: 'rnfp-more', type: 'button', text: 'Load more',
+      title: 'Fetch the next batch of older notifications and add them to the bottom of the list.',
+      onclick: loadMore });
     ui.body   = el('div', { class: 'rnfp-body' }, ui.list, ui.status, ui.more);
 
     ui.footLeft  = el('span', { text: '' });
-    ui.footRight = el('a', { href: NOTIF_PAGE, text: 'Open notifications page', onclick: e => { e.preventDefault(); openUrl(NOTIF_PAGE, true); } });
+    ui.footRight = el('a', { href: NOTIF_PAGE, text: 'Open notifications page',
+      title: "Open Reddit's own notifications page in a new tab.",
+      onclick: e => { e.preventDefault(); openUrl(NOTIF_PAGE, true); } });
     ui.foot = el('div', { class: 'rnfp-foot' }, ui.footLeft, ui.footRight);
 
     ui.intervalMenu = el('div', { class: 'rnfp-menu', role: 'menu' });
@@ -1179,6 +1209,15 @@
     geometry = anchorToGeometry(anchor) || clampGeometry(defaultGeometry());
     saveGeometry();
     if (!isOpen()) openPanel(); else { layoutPanel(); scheduleAnchorRetries(); }
+  }
+
+  // Closing means two different things depending on the remember setting, and which one is
+  // in force is exactly what a user cannot see. Refreshed whenever that setting changes.
+  function updateCloseTip() {
+    if (!ui.closeBtn) return;
+    ui.closeBtn.title = settings.rememberPages
+      ? 'Close the panel. This page is remembered as closed, so it stays shut here until you open it again.'
+      : 'Close the panel. Nothing is remembered — the next page decides for itself.';
   }
 
   function updateMinButton() {
@@ -1395,43 +1434,68 @@
     const opening = !ui.intervalMenu.classList.contains('open');
     closeMenus();
     if (!opening) return;
-    buildIntervalMenu(false);
+    buildIntervalMenu();
     ui.intervalMenu.classList.add('open');
     positionMenu(ui.intervalMenu, ui.intervalBtn);
   }
 
-  function buildIntervalMenu(customMode) {
+  function setRefresh(ms) {
+    settings.refreshMs = ms;
+    saveSettings();
+    startAutoRefresh();
+    updateFoot();
+  }
+
+  function buildIntervalMenu() {
     const menu = ui.intervalMenu;
     menu.textContent = '';
-    if (customMode) {
-      const input = el('input', { type: 'number', min: String(MIN_REFRESH_MS / 1000), step: '5', value: String(Math.max(MIN_REFRESH_MS, settings.refreshMs || 60000) / 1000) });
-      const apply = () => {
-        const secs = parseInt(input.value, 10);
-        if (isNaN(secs) || secs * 1000 < MIN_REFRESH_MS) { input.focus(); input.select(); return; }
-        settings.refreshMs = secs * 1000;
-        saveSettings();
-        startAutoRefresh();
-        closeMenus();
-        updateFoot();
-      };
-      input.addEventListener('keydown', ev => { if (ev.key === 'Enter') apply(); if (ev.key === 'Escape') closeMenus(); });
-      menu.appendChild(el('div', { class: 'rnfp-menu-row' }, input, el('span', { text: 'sec' }), el('button', { class: 'rnfp-ok', type: 'button', text: 'OK', onclick: apply })));
-      positionMenu(menu, ui.intervalBtn);
-      requestAnimationFrame(() => { input.focus(); input.select(); });
-      return;
-    }
-    const options = REFRESH_OPTIONS.slice();
-    const isPreset = options.some(o => o.ms === settings.refreshMs);
-    if (!isPreset && settings.refreshMs) options.splice(options.length - 1, 0, { label: refreshLabel(settings.refreshMs), ms: settings.refreshMs });
-    for (const opt of options) {
+    const isPreset = REFRESH_OPTIONS.some(o => o.ms === settings.refreshMs);
+    for (const opt of REFRESH_OPTIONS) {
       menu.appendChild(el('button', {
         class: 'rnfp-menu-item' + (opt.ms === settings.refreshMs ? ' selected' : ''),
         type: 'button', role: 'menuitem', text: opt.label,
-        onclick: () => { settings.refreshMs = opt.ms; saveSettings(); startAutoRefresh(); closeMenus(); updateFoot(); },
+        title: opt.ms
+          ? 'Check for new notifications every ' + opt.label.replace('sec', 'seconds').replace('min', 'minutes') + '.'
+          : 'Never check on its own. The list only updates when you press Reload or reopen the panel.',
+        onclick: () => { setRefresh(opt.ms); closeMenus(); },
       }));
     }
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
-    menu.appendChild(el('button', { class: 'rnfp-menu-item', type: 'button', role: 'menuitem', text: 'Custom…', onclick: () => buildIntervalMenu(true) }));
+
+    // The live interval, always visible and always editable — no second popup. Muted while
+    // it only mirrors the selected preset; `active` (full strength, no preset highlighted)
+    // once a custom value is the setting.
+    const input = el('input', {
+      type: 'number', min: String(MIN_REFRESH_MS / 1000), step: '5',
+      'aria-label': 'Custom refresh interval in seconds',
+      value: settings.refreshMs ? String(settings.refreshMs / 1000) : '',
+    });
+    if (!settings.refreshMs) input.placeholder = 'off';
+    const row = el('div', {
+      class: 'rnfp-custom' + (isPreset ? '' : ' active'),
+      title: 'Any interval you like, in seconds — at least ' + (MIN_REFRESH_MS / 1000) +
+             '. Press Enter to apply. Reddit is being asked for your inbox each time, so ' +
+             'very short intervals are a lot of requests.',
+    }, el('span', { text: 'Custom' }), el('span', { class: 'rnfp-secs' }, input, el('span', { text: 'sec' })));
+
+    const apply = () => {
+      const secs = parseInt(input.value, 10);
+      if (isNaN(secs) || secs * 1000 < MIN_REFRESH_MS) { row.classList.add('invalid'); return false; }
+      row.classList.remove('invalid');
+      setRefresh(secs * 1000);
+      return true;
+    };
+    input.addEventListener('input', () => row.classList.remove('invalid'));
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('keydown', ev => {
+      ev.stopPropagation();               // Escape belongs to the input first, not the panel
+      if (ev.key === 'Enter') { if (apply()) closeMenus(); }
+      else if (ev.key === 'Escape') { buildIntervalMenu(); }
+    });
+    // Committing on blur as well as Enter, so clicking away from a typed number keeps it
+    // rather than silently discarding it.
+    input.addEventListener('blur', () => { if (input.value !== '') apply(); });
+    menu.appendChild(row);
   }
 
   function toggleSettingsMenu(e) {
@@ -1441,6 +1505,11 @@
     if (!opening) return;
     buildSettingsMenu();
     ui.settingsMenu.classList.add('open');
+    // Never narrower than the panel it belongs to: a menu floating inside a much wider
+    // panel reads as a stray box rather than that panel's own settings. Re-measured on
+    // every open because the panel is resizable. It may still be WIDER than the panel —
+    // the rows are nowrap and a label is not going to be truncated to fit.
+    ui.settingsMenu.style.minWidth = panel.offsetWidth + 'px';
     positionMenu(ui.settingsMenu, ui.settingsBtn, panel);
   }
 
@@ -1505,7 +1574,8 @@
       'Opening or closing the panel on a page is remembered for that page and overrides the ' +
       'choice above, in both directions. Kept for a year after your last visit, up to ' +
       PAGE_MAX.toLocaleString() + ' pages. Off, nothing is recorded and every page follows the ' +
-      'choice above.');
+      'choice above.',
+      updateCloseTip);
     menu.appendChild(newTabRow.row);
     menu.appendChild(switchRow.row);
     menu.appendChild(el('div', { class: 'rnfp-menu-sep' }));
@@ -1544,7 +1614,10 @@
     ui.status.className = 'rnfp-status visible' + (kind === 'error' ? ' error' : '');
     if (kind === 'loading') ui.status.appendChild(el('div', { class: 'rnfp-spinner' }));
     ui.status.appendChild(el('div', { text: message }));
-    if (retry) ui.status.appendChild(el('button', { class: 'rnfp-retry', type: 'button', text: 'Try again', onclick: () => refresh(true) }));
+    if (retry) ui.status.appendChild(el('button', { class: 'rnfp-retry', type: 'button', text: 'Try again',
+      title: 'Ask Reddit for the list again. Most failures here are a dropped request or a ' +
+             'signed-out session.',
+      onclick: () => refresh(true) }));
   }
   function hideStatus() { if (ui.status) ui.status.className = 'rnfp-status'; }
 
@@ -1605,9 +1678,11 @@
     if (avatar.tagName === 'IMG') {
       avatar.addEventListener('error', () => { const ph = el('div', { class: 'rnfp-avatar' }, ICON.user()); avatar.replaceWith(ph); }, { once: true });
     }
-    const markBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Mark as read', 'aria-label': 'Mark as read',
+    const markBtn = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Mark as read',
+      title: 'Mark just this one as read, without opening it.',
       onclick: e => { e.stopPropagation(); markItemRead(item); } }, ICON.check());
-    const openBtn = el('button', { class: 'rnfp-btn', type: 'button', title: 'Open in a new tab', 'aria-label': 'Open in a new tab',
+    const openBtn = el('button', { class: 'rnfp-btn', type: 'button', 'aria-label': 'Open in a new tab',
+      title: 'Open this notification in a new tab, whatever the new-tab setting says.',
       onclick: e => { e.stopPropagation(); openItem(item, { forceNewTab: true }); } }, ICON.external());
     const li = el('li', { class: 'rnfp-item' + (item.unread ? ' unread' : ''), 'data-id': item.id, role: 'link', tabindex: '0' },
       avatar,
@@ -1630,6 +1705,9 @@
     ui.count.textContent = unread > 0 ? String(unread) : '';
     const had = ui.title.classList.contains('has-unread');
     ui.title.classList.toggle('has-unread', unread > 0);
+    ui.title.title = unread === 0
+      ? 'Nothing unread in the ' + items.length + ' notification' + (items.length === 1 ? '' : 's') + ' loaded here.'
+      : unread + ' unread of the ' + items.length + ' loaded here. Drag this bar to move the panel.';
     ui.markAllBtn.disabled = unread === 0;
     if (unread > lastUnread && had) {
       // Re-trigger the ring animation when more unread arrive while already unread.
@@ -1647,11 +1725,17 @@
 
   function updateFoot(override) {
     if (!panel) return;
-    if (override) { ui.footLeft.textContent = override; return; }
+    if (override) { ui.footLeft.textContent = override; ui.footLeft.title = override; return; }
     const parts = [];
     if (lastLoadedAt) parts.push('Updated ' + relativeTime(new Date(lastLoadedAt).toISOString(), '') + (Date.now() - lastLoadedAt >= 60000 ? ' ago' : ''));
     parts.push('Auto: ' + refreshLabel(settings.refreshMs));
     ui.footLeft.textContent = parts.join(' · ');
+    ui.footLeft.title = (lastLoadedAt
+      ? 'Last fetched from Reddit at ' + new Date(lastLoadedAt).toLocaleTimeString() + '. '
+      : 'Not fetched yet. ') +
+      (settings.refreshMs
+        ? 'Checking again every ' + refreshLabel(settings.refreshMs) + ' while the panel is open.'
+        : 'Auto-refresh is off — use Reload.');
   }
 
   // ---------------------------------------------------------------------------
@@ -1815,14 +1899,20 @@
     const open = isOpen();
     const unread = items.filter(i => i.unread).length;
     const entries = [
-      { icon: ICON.external(), label: 'Open Reddit notifications page', action: () => openUrl(NOTIF_PAGE, true) },
-      { icon: ICON.panel(),    label: open ? 'Hide notifications panel' : 'Show notifications panel', action: togglePanel },
-      { icon: ICON.checkAll(), label: 'Mark all as read', action: doMarkAllRead, disabled: open && unread === 0 && lastLoadedAt > 0 },
-      { icon: ICON.reset(),    label: 'Reset panel location', action: resetPanel },
+      { icon: ICON.external(), label: 'Open Reddit notifications page', action: () => openUrl(NOTIF_PAGE, true),
+        tip: "Leave the panel alone and open Reddit's own inbox page in a new tab." },
+      { icon: ICON.panel(),    label: open ? 'Hide notifications panel' : 'Show notifications panel', action: togglePanel,
+        tip: open
+          ? 'Close the floating panel. Left-clicking the bell does this too.'
+          : 'Open the floating panel here. Left-clicking the bell does this too.' },
+      { icon: ICON.checkAll(), label: 'Mark all as read', action: doMarkAllRead, disabled: open && unread === 0 && lastLoadedAt > 0,
+        tip: 'Mark every notification in your Reddit inbox as read, without opening the panel.' },
+      { icon: ICON.reset(),    label: 'Reset panel location', action: resetPanel,
+        tip: 'Put the panel back in its default place and size, tucked inside the right sidebar.' },
     ];
     const ul = el('ul', { id: CTX_ID, role: 'menu' });
     for (const it of entries) {
-      ul.appendChild(el('li', { role: 'menuitem', class: it.disabled ? 'disabled' : undefined, onclick: () => { removeCtxMenu(); it.action(); } },
+      ul.appendChild(el('li', { role: 'menuitem', title: it.tip, class: it.disabled ? 'disabled' : undefined, onclick: () => { removeCtxMenu(); it.action(); } },
         it.icon, el('span', { text: it.label })));
     }
     applyTheme(ul);
