@@ -120,6 +120,9 @@ here**: the only source is `../HoverZoom/dock/us-dock.js`, copied into all three
   starts; it snaps through `panelDock.snap()` (window edges, window centre, other widgets) and
   reports through `dragAt()`/`dragEnd()` so an attached widget travels with it. Ctrl turns
   snapping off for both the drag and the edge resize.
+- **The panel's CSS palette is the source of `usDock.THEME`**, which Forum Stumbler's bar and Hover
+  Zoom's widget wear; change the two together. `pageIsDark()` delegates to `usDock.pageIsDark()`
+  (v6.17.0) so all three pick light or dark alike.
 - Test harness: `../HoverZoom/test-pages/dock-live.html` runs this script and Hover Zoom together
   behind GM stubs, served from the Monkey Scripts folder.
 
