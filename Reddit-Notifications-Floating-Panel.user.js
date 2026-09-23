@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.17.0
+// @version      6.18.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -275,6 +275,7 @@
     const SNAP = 8;                 // px: window edges, the window's centre, other widgets
     const TOUCH = 1;                // px: how close two edges must be to count as attached at a drop
     const PASSES = 4;               // overlap sweeps; three widgets settle in two
+    const SHADOW_REACH = 40;        // px: how far THEME.shadow spreads past a widget
     const A_ID = 'data-us-dock', A_SPEC = 'data-us-dock-a', A_SIZE = 'data-us-dock-s',
       A_GREW = 'data-us-dock-t', A_DRAG = 'data-us-dock-d', A_STRETCH = 'data-us-dock-st';
     const WATCHED = [A_ID, A_SPEC, A_SIZE, A_GREW, A_DRAG, A_STRETCH, 'hidden'];
@@ -542,12 +543,36 @@
       mine.forEach(function (w) {
         const d = docks.find(function (k) { return k.el === w.el; });
         if (!d) return;
+        clipShadow(w, d, docks, viewport());
         if (w.o.apply) { w.o.apply(d.out); return; }
         setPx(w.el, 'left', d.out.x);
         setPx(w.el, 'top', d.out.y);
         if (w.el.style.right !== 'auto') w.el.style.right = 'auto';
         if (w.el.style.bottom !== 'auto') w.el.style.bottom = 'auto';
       });
+    }
+
+    // A widget's shadow is cut away where another widget sits, so it reads as passing under it.
+    function clipShadow(w, d, docks, V) {
+      const o = d.out;
+      const box = function (l, t, r, b) {
+        l = cent(l - o.x); t = cent(t - o.y); r = cent(r - o.x); b = cent(b - o.y);
+        return 'M' + l + ' ' + t + 'H' + r + 'V' + b + 'H' + l + 'Z';
+      };
+      const holes = [];
+      docks.forEach(function (k) {
+        if (k === d || !k.out) return;
+        const r = k.out;
+        // Bodies overlapping mid-drag: nothing is cut, or the body itself would be.
+        if (r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) return;
+        const l = Math.max(r.x, o.x - SHADOW_REACH), t = Math.max(r.y, o.y - SHADOW_REACH);
+        const rr = Math.min(r.x + r.w, o.x + o.w + SHADOW_REACH), b = Math.min(r.y + r.h, o.y + o.h + SHADOW_REACH);
+        if (rr - l > 0.5 && b - t > 0.5) holes.push(box(l, t, rr, b));
+      });
+      const want = holes.length ? "path(evenodd, '" + box(0, 0, V.w, V.h) + holes.join('') + "')" : '';
+      if (w.clip === want) return;
+      w.clip = want;
+      w.el.style.clipPath = want;
     }
 
     function observeDocks() {
