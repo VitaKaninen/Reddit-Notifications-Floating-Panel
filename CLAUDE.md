@@ -103,6 +103,26 @@ cleared), old.reddit bell menu + RES night-mode theme detection.
 **Not yet verified:** "Load more" (needs >20 notifications; the code looks for a nested
 `faceplate-partial` whose `src` contains `notification`).
 
+## The shared dock (v6.16.0)
+
+The panel takes part in `usDock`, the block between the `// ==== us-dock begin/end ====` markers,
+so Hover Zoom's tour widget and Forum Stumbler's bar stay clear of it. **Do not edit that block
+here**: the only source is `../HoverZoom/dock/us-dock.js`, copied into all three scripts by
+`node dock/sync-dock.js` (run from HoverZoom). Design: `../HoverZoom/docs/WIDGET-DOCK.md`.
+
+- **The panel keeps its own geometry** (the four anchored edges above). It only *publishes* where
+  it is: `panelSpec()` → a window anchor at its current left/top, size = the restored `geometry`
+  (not the squeezed height, which is an output), `stretchMin` = `MIN_H`. `layoutPanel()` calls
+  `panelDock.reload()`.
+- **Its height is the dock's output**: a widget below the panel pushes the panel's bottom up, down
+  to `MIN_H`, and it grows back when the widget goes. The top never moves for it.
+- **The header drag is still RNFP's own**, with `handle: () => false` so the dock's drag never
+  starts; it snaps through `panelDock.snap()` (window edges, window centre, other widgets) and
+  reports through `dragAt()`/`dragEnd()` so an attached widget travels with it. Ctrl turns
+  snapping off for both the drag and the edge resize.
+- Test harness: `../HoverZoom/test-pages/dock-live.html` runs this script and Hover Zoom together
+  behind GM stubs, served from the Monkey Scripts folder.
+
 ## Tab title indicator (v6.5.0)
 
 Asked for 2026-09-02: flash the tab twice when a notification arrives, then leave the count at
