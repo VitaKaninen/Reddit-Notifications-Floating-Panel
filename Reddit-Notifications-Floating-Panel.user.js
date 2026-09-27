@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.19.0
+// @version      6.20.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -273,7 +273,7 @@
   // `node dock/sync-dock.js` from HoverZoom. The design is HoverZoom/docs/WIDGET-DOCK.md.
   const usDock = (function () {
     const SNAP = 8;                 // px: window edges, the window's centre, other widgets
-    const STATUS_BAND = 25;         // px: the browser's link-URL bubble along the window's bottom
+    const STATUS_BAND = 21;         // px: the browser's link-URL bubble along the window's bottom
     const TOUCH = 1;                // px: how close two edges must be to count as attached at a drop
     const PASSES = 4;               // overlap sweeps; three widgets settle in two
     const SHADOW_REACH = 40;        // px: how far THEME.shadow spreads past a widget
