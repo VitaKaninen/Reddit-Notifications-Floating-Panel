@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Notifications Floating Panel
 // @namespace    https://github.com/VitaKaninen
-// @version      6.21.0
+// @version      6.22.0
 // @description  Right-click the Reddit notifications bell to open a floating, movable, resizable panel that lists your notifications and lets you mark them read
 // @author       VitaKaninen
 // @match        https://www.reddit.com/*
@@ -2350,6 +2350,9 @@
       text: 'Reset panel position & size',
       onclick: () => { pulse(resetBtn); closeMenus(); resetPanel(); } });
     menu.appendChild(resetBtn);
+    const verLine = el('div', { text: 'v' + ((typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?') });
+    verLine.style.cssText = 'text-align: right; padding: 2px 10px 4px; font-size: 11px; color: var(--muted);';
+    menu.appendChild(verLine);
   }
 
   // ---------------------------------------------------------------------------
